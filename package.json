@@ -8,7 +8,9 @@
     "dev": "wrangler dev --local --port 8791 --persist-to .wrangler/state",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test",
     "db:migrate": "wrangler d1 migrations apply DB --local --persist-to .wrangler/state",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
   },
@@ -18,7 +20,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260418.1",
+    "@types/node": "^25.6.0",
     "typescript": "^6.0.3",
+    "vitest": "^4.1.5",
     "wrangler": "^4.83.0"
   }
 }

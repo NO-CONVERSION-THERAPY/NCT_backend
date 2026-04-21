@@ -241,6 +241,7 @@ npm run db:migrate:remote
 
 已经本地验证通过：
 
+- `npm run test`
 - `npm run check`
 - `npm run predev`
 - `POST /api/write`
