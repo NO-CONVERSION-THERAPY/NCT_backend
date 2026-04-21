@@ -1,0 +1,38 @@
+# 当子库需要把本地 nct_databack 导出回母库时，会使用与母库相同的加密密钥
+ENCRYPTION_KEY=replace-with-openssl-rand-base64-32
+
+# 默认加密字段列表；当 nct_databack 中存在本地原始记录时，导出给母库前会按这些字段转成 secure payload
+DEFAULT_ENCRYPT_FIELDS=name,phone,email,idCard
+
+# 加密密钥版本号，会随导出的 secure payload 一起传给母库
+ENCRYPTION_KEY_VERSION=1
+
+# `POST /api/write` 使用的写入鉴权 token
+WRITE_TOKEN=replace-with-write-token
+
+# `GET /api/data/*`、`GET /api/health` 等读取接口使用的读取 token
+READ_TOKEN=replace-with-read-token
+
+# 子库向母库 `POST /api/sub/report` 上报时使用的 token
+# 这里应与主库 `nct-api-sql` 的 `SUB_REPORT_TOKEN` 保持一致
+MOTHER_REPORT_TOKEN=replace-with-report-token
+
+# 母库向子库 `POST /api/push/secure-records` 推送数据时使用的 token
+# 这里应与主库 `nct-api-sql` 的 `SUB_PUSH_TOKEN` 保持一致
+# 同时也会用于母库访问 `GET /api/export/nct_databack`
+MOTHER_PUSH_TOKEN=replace-with-mother-push-token
+
+# 当前子库对外访问的完整基地址
+# 母库会把这个地址作为子库来源地址记录到第三张表
+SERVICE_PUBLIC_URL=https://sub.example.com
+
+# 母库接收上报的接口地址
+# 通常填写主库的 `https://你的主库域名/api/sub/report`
+MOTHER_REPORT_URL=https://api.example.com/api/sub/report
+
+# 可选：上报超时时间，单位毫秒
+# 本地调试时可以改小，例如 1000；生产环境建议保留较大值
+MOTHER_REPORT_TIMEOUT_MS=10000
+
+# 如果本地不希望真的向母库上报，可以改成空值：
+# MOTHER_REPORT_URL=
