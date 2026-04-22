@@ -4,6 +4,8 @@
     "lib": [
       "ES2023"
     ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,

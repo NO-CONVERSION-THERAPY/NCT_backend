@@ -9,6 +9,7 @@
 - `nct_form` 与 `nct_databack` 两张 D1 表
 - 表字段按传入 JSON 顶层字段自动扩列
 - 数据写入与数据请求 API
+- 作为 `No-Torsion` 的后端服务，承接表单、机构修正、翻译与前端运行时 token
 - 接收母库 `nct-api-sql` 主动推送的第二张表数据并写入 `nct_databack`
 - 按母库请求把 `nct_databack` 导出成附件文件并回传给母库
 - 服务首次执行时向母库报告一次
@@ -136,6 +137,35 @@
 
 手动触发一次向母库的上报。
 
+### `GET /api/no-torsion/frontend-runtime`
+
+供 `No-Torsion` 前端获取最新表单保护 token。
+
+### `POST /api/no-torsion/form/prepare`
+
+供 `No-Torsion` 主表单在真正提交前执行：
+
+- 防刷 token 校验
+- 表单字段校验与规范化
+- 预览模式 / 确认模式分流
+
+### `POST /api/no-torsion/form/confirm`
+
+供 `No-Torsion` 主表单确认页执行最终投递。
+根据配置可投递到：
+
+- Google Form
+- 本地 D1
+- 两者同时
+
+### `POST /api/no-torsion/correction/submit`
+
+供 `No-Torsion` 机构信息补充 / 修正表单提交。
+
+### `POST /api/no-torsion/translate-text`
+
+供 `No-Torsion` 详情页调用明细翻译能力。
+
 ### `POST /api/push/secure-records`
 
 接收母库 `nct-api-sql` 主动推送的第二张表数据，并按母库的 `recordKey`、`version`、`fingerprint` 幂等写入 `nct_databack`。
@@ -180,11 +210,29 @@
 - `MOTHER_PUSH_TOKEN` 可选
 - `MOTHER_REPORT_TIMEOUT_MS` 可选
 
+如果同时作为 `No-Torsion` 后端，还建议配置：
+
+- `NO_TORSION_SERVICE_TOKEN`
+- `NO_TORSION_FORM_PROTECTION_SECRET` 可选
+- `NO_TORSION_FORM_DRY_RUN` 可选
+- `NO_TORSION_FORM_SUBMIT_TARGET` 可选
+- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_FORM_ID` 可选
+- `NO_TORSION_CORRECTION_SUBMIT_TARGET` 可选
+- `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_FORM_ID` 可选
+- `NO_TORSION_SITE_URL` 可选
+- `GOOGLE_CLOUD_TRANSLATION_API_KEY` 可选
+- `TRANSLATION_PROVIDER_TIMEOUT_MS` 可选
+
 其中：
 
 - `ENCRYPTION_KEY` 需要与母库保持一致，这样母库才能解密子库回传的 secure payload
 - `MOTHER_REPORT_TOKEN` 需要与主库 `SUB_REPORT_TOKEN` 保持一致
 - `MOTHER_PUSH_TOKEN` 需要与主库 `SUB_PUSH_TOKEN` 保持一致，并同时用于保护 `GET /api/export/nct_databack`
+
+当 `No-Torsion` 接入本服务时：
+
+- `No-Torsion` 侧将 `NCT_BACKEND_SERVICE_URL` 指向这个服务
+- `No-Torsion` 侧的 `NCT_BACKEND_SERVICE_TOKEN` 需要与这里的 `NO_TORSION_SERVICE_TOKEN` 保持一致
 
 注意：
 

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { renderToString } from 'hono/jsx/dom/server';
 import { z } from 'zod';
 import {
   exportDatabackFile,
@@ -9,9 +10,22 @@ import {
   listRecords,
   writeRecord
 } from './lib/data';
+import {
+  confirmNoTorsionFormSubmission,
+  issueFormProtectionToken,
+  prepareNoTorsionFormSubmission,
+  submitNoTorsionCorrection,
+  type NoTorsionConfirmResult
+} from './lib/no-torsion-form';
+import { translateDetailItems } from './lib/no-torsion-translation';
 import { toJsonObject } from './lib/json';
 import { maybeReportOnFirstExecution, reportToMother } from './lib/report';
 import { assertToken } from './lib/security';
+import {
+  NoTorsionStandaloneFormPage,
+  NoTorsionStandalonePreviewPage,
+  NoTorsionStandaloneResultPage,
+} from './site/no-torsion-form-page';
 import type { DynamicTableName, MotherPushPayload, RecordWriteRequest } from './types';
 
 const tableSchema = z.enum(['nct_form', 'nct_databack']);
@@ -61,7 +75,116 @@ const RECOGNIZED_MOTHER_SERVICES = new Set([
   'nct-api-sql'
 ]);
 
-const app = new Hono<{ Bindings: Env }>();
+function parseNoTorsionBody(input: unknown): {
+  body: Record<string, unknown>;
+  requestContext: {
+    clientIp?: string;
+    lang?: string;
+    sourcePath?: string;
+    userAgent?: string;
+  };
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Expected an object body.');
+  }
+
+  const candidate = input as {
+    body?: unknown;
+    requestContext?: unknown;
+  };
+  const body =
+    candidate.body && typeof candidate.body === 'object' && !Array.isArray(candidate.body)
+      ? toJsonObject(candidate.body as Record<string, unknown>)
+      : toJsonObject(candidate as Record<string, unknown>);
+  const rawRequestContext =
+    candidate.requestContext && typeof candidate.requestContext === 'object' && !Array.isArray(candidate.requestContext)
+      ? candidate.requestContext as Record<string, unknown>
+      : {};
+
+  return {
+    body,
+    requestContext: {
+      clientIp:
+        typeof rawRequestContext.clientIp === 'string'
+          ? rawRequestContext.clientIp
+          : undefined,
+      lang:
+        typeof rawRequestContext.lang === 'string'
+          ? rawRequestContext.lang
+          : undefined,
+      sourcePath:
+        typeof rawRequestContext.sourcePath === 'string'
+          ? rawRequestContext.sourcePath
+          : undefined,
+      userAgent:
+        typeof rawRequestContext.userAgent === 'string'
+          ? rawRequestContext.userAgent
+          : undefined
+    }
+  };
+}
+
+function buildNoTorsionErrorResponse(
+  context: Parameters<typeof assertToken>[0],
+  error: unknown
+): Response {
+  const message = error instanceof Error ? error.message : 'Unknown backend error.';
+
+  if (message.startsWith('FORM_PROTECTION:')) {
+    return context.json(
+      {
+        error: 'Invalid form submission.',
+        reason: message.slice('FORM_PROTECTION:'.length)
+      },
+      400
+    );
+  }
+
+  if (message.startsWith('FORM_VALIDATION:')) {
+    return context.json(
+      {
+        details: message
+          .slice('FORM_VALIDATION:'.length)
+          .split(' | ')
+          .filter(Boolean),
+        error: 'Form validation failed.'
+      },
+      400
+    );
+  }
+
+  if (message.startsWith('FORM_CONFIRMATION:')) {
+    return context.json(
+      {
+        error: 'Invalid confirmation payload.',
+        reason: message.slice('FORM_CONFIRMATION:'.length)
+      },
+      400
+    );
+  }
+
+  if (message.startsWith('CORRECTION_VALIDATION:')) {
+    return context.json(
+      {
+        details: message
+          .slice('CORRECTION_VALIDATION:'.length)
+          .split(' | ')
+          .filter(Boolean),
+        error: 'Correction validation failed.'
+      },
+      400
+    );
+  }
+
+  return context.json(
+    {
+      error: message
+    },
+    500
+  );
+}
+
+export const app = new Hono<{ Bindings: Env }>();
 
 async function readMultipartJsonPayload(request: Request): Promise<unknown> {
   const contentType = request.headers.get('content-type') ?? '';
@@ -81,6 +204,76 @@ async function readMultipartJsonPayload(request: Request): Promise<unknown> {
   }
 
   return JSON.parse(await (fileEntry as Blob).text());
+}
+
+async function parseFormBody(
+  request: Request
+): Promise<Record<string, unknown>> {
+  const formData = await request.formData();
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of formData.entries()) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const existingValue = result[key];
+    if (typeof existingValue === 'undefined') {
+      result[key] = value;
+      continue;
+    }
+
+    if (Array.isArray(existingValue)) {
+      existingValue.push(value);
+      continue;
+    }
+
+    result[key] = [existingValue, value];
+  }
+
+  return result;
+}
+
+function resolveNoTorsionLanguage(value?: string): 'en' | 'zh-CN' | 'zh-TW' {
+  return value === 'en' || value === 'zh-CN' || value === 'zh-TW'
+    ? value
+    : 'zh-CN';
+}
+
+function readClientIp(request: Request): string | undefined {
+  const directIp = request.headers.get('cf-connecting-ip')?.trim();
+  if (directIp) {
+    return directIp;
+  }
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (!forwarded) {
+    return undefined;
+  }
+
+  const firstHop = forwarded
+    .split(',')
+    .map((chunk) => chunk.trim())
+    .find(Boolean);
+
+  return firstHop || undefined;
+}
+
+function buildStandaloneFailureResult(message: string): NoTorsionConfirmResult {
+  return {
+    encodedPayload: '',
+    resultsByTarget: {
+      d1: {
+        error: message,
+        ok: false
+      },
+      google: {
+        error: message,
+        ok: false
+      }
+    },
+    successfulTargets: []
+  };
 }
 
 app.use(
@@ -108,12 +301,163 @@ app.get('/', async (context) => {
       health: '/api/health',
       write: '/api/write',
       pushFromMother: '/api/push/secure-records',
+      noTorsionFormPage: '/no-torsion/form',
+      noTorsionFrontendRuntime: '/api/no-torsion/frontend-runtime',
+      noTorsionFormPrepare: '/api/no-torsion/form/prepare',
+      noTorsionFormConfirm: '/api/no-torsion/form/confirm',
+      noTorsionCorrectionSubmit: '/api/no-torsion/correction/submit',
+      noTorsionTranslateText: '/api/no-torsion/translate-text',
       exportDataback: '/api/export/nct_databack',
       readForm: '/api/data/nct_form',
       readDataback: '/api/data/nct_databack',
       reportNow: '/api/report-now'
     }
   });
+});
+
+app.get('/no-torsion/form', async (context) => {
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+  const token = await issueFormProtectionToken(context.env);
+
+  return context.html(
+    renderToString(
+      NoTorsionStandaloneFormPage({
+        lang: language,
+        token
+      })
+    )
+  );
+});
+
+app.post('/no-torsion/form', async (context) => {
+  const body = await parseFormBody(context.req.raw);
+  const language = resolveNoTorsionLanguage(
+    typeof body.lang === 'string' ? body.lang : context.req.query('lang')
+  );
+
+  try {
+    const result = await prepareNoTorsionFormSubmission(
+      context.env.DB,
+      context.env,
+      {
+        body,
+        requestContext: {
+          clientIp: readClientIp(context.req.raw),
+          lang: language,
+          sourcePath: new URL(context.req.url).pathname,
+          userAgent: context.req.header('user-agent'),
+        },
+      }
+    );
+
+    return context.html(
+      renderToString(
+        NoTorsionStandalonePreviewPage({
+          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          confirmationPayload:
+            result.mode === 'confirm' ? result.confirmationPayload : undefined,
+          confirmationToken:
+            result.mode === 'confirm' ? result.confirmationToken : undefined,
+          formAction: `/no-torsion/form/confirm?lang=${encodeURIComponent(language)}`,
+          lang: language,
+          mode: result.mode,
+          values: result.values
+        })
+      )
+    );
+  } catch (error) {
+    const response = buildNoTorsionErrorResponse(context, error);
+    const message = await response.json() as {
+      details?: string[];
+      error?: string;
+      reason?: string;
+    };
+
+    return context.html(
+      renderToString(
+        NoTorsionStandaloneResultPage({
+          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          lang: language,
+          result: buildStandaloneFailureResult(
+            [
+              message.error,
+              ...(Array.isArray(message.details) ? message.details : []),
+              message.reason
+            ]
+              .filter(Boolean)
+              .join(' / ')
+          ),
+          statusCode: response.status
+        })
+      ),
+      { status: response.status as 400 | 500 }
+    );
+  }
+});
+
+app.post('/no-torsion/form/confirm', async (context) => {
+  const body = await parseFormBody(context.req.raw);
+  const language = resolveNoTorsionLanguage(
+    typeof body.lang === 'string' ? body.lang : context.req.query('lang')
+  );
+
+  try {
+    const result = await confirmNoTorsionFormSubmission(
+      context.env.DB,
+      context.env,
+      {
+        confirmationPayload:
+          typeof body.confirmation_payload === 'string'
+            ? body.confirmation_payload
+            : '',
+        confirmationToken:
+          typeof body.confirmation_token === 'string'
+            ? body.confirmation_token
+            : '',
+      }
+    );
+    const statusCode: 200 | 500 =
+      result.successfulTargets.length > 0 ? 200 : 500;
+
+    return context.html(
+      renderToString(
+        NoTorsionStandaloneResultPage({
+          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          lang: language,
+          result,
+          statusCode
+        })
+      ),
+      statusCode
+    );
+  } catch (error) {
+    const response = buildNoTorsionErrorResponse(context, error);
+    const message = await response.json() as {
+      details?: string[];
+      error?: string;
+      reason?: string;
+    };
+
+    return context.html(
+      renderToString(
+        NoTorsionStandaloneResultPage({
+          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          lang: language,
+          result: buildStandaloneFailureResult(
+            [
+              message.error,
+              ...(Array.isArray(message.details) ? message.details : []),
+              message.reason
+            ]
+              .filter(Boolean)
+              .join(' / ')
+          ),
+          statusCode: response.status
+        })
+      ),
+      { status: response.status as 400 | 500 }
+    );
+  }
 });
 
 app.get('/api/health', async (context) => {
@@ -129,6 +473,180 @@ app.get('/api/health', async (context) => {
     tables: counts,
     checkedAt: new Date().toISOString()
   });
+});
+
+app.get('/api/no-torsion/frontend-runtime', async (context) => {
+  const authError = assertToken(
+    context,
+    context.env.NO_TORSION_SERVICE_TOKEN,
+    'No-Torsion service'
+  );
+  if (authError) {
+    return authError;
+  }
+
+  const scope = (context.req.query('scope') ?? 'form').trim();
+  if (scope !== 'form' && scope !== 'correction') {
+    return context.json(
+      {
+        error: 'Unsupported frontend runtime scope.'
+      },
+      400
+    );
+  }
+
+  return context.json({
+    formProtectionToken: await issueFormProtectionToken(context.env),
+    scope
+  });
+});
+
+app.post('/api/no-torsion/form/prepare', async (context) => {
+  const authError = assertToken(
+    context,
+    context.env.NO_TORSION_SERVICE_TOKEN,
+    'No-Torsion service'
+  );
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const input = parseNoTorsionBody(await context.req.json());
+    const result = await prepareNoTorsionFormSubmission(
+      context.env.DB,
+      context.env,
+      input
+    );
+
+    return context.json(result);
+  } catch (error) {
+    return buildNoTorsionErrorResponse(context, error);
+  }
+});
+
+app.post('/api/no-torsion/form/confirm', async (context) => {
+  const authError = assertToken(
+    context,
+    context.env.NO_TORSION_SERVICE_TOKEN,
+    'No-Torsion service'
+  );
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = await context.req.json() as {
+      confirmationPayload?: unknown;
+      confirmationToken?: unknown;
+    };
+    const result = await confirmNoTorsionFormSubmission(
+      context.env.DB,
+      context.env,
+      {
+        confirmationPayload:
+          typeof body.confirmationPayload === 'string'
+            ? body.confirmationPayload
+            : '',
+        confirmationToken:
+          typeof body.confirmationToken === 'string'
+            ? body.confirmationToken
+            : ''
+      }
+    );
+
+    return context.json(
+      result,
+      result.successfulTargets.length > 0 ? 200 : 500
+    );
+  } catch (error) {
+    return buildNoTorsionErrorResponse(context, error);
+  }
+});
+
+app.post('/api/no-torsion/correction/submit', async (context) => {
+  const authError = assertToken(
+    context,
+    context.env.NO_TORSION_SERVICE_TOKEN,
+    'No-Torsion service'
+  );
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const input = parseNoTorsionBody(await context.req.json());
+    const result = await submitNoTorsionCorrection(
+      context.env.DB,
+      context.env,
+      input
+    );
+
+    return context.json(
+      result,
+      result.successfulTargets.length > 0 ? 200 : 500
+    );
+  } catch (error) {
+    return buildNoTorsionErrorResponse(context, error);
+  }
+});
+
+app.post('/api/no-torsion/translate-text', async (context) => {
+  const authError = assertToken(
+    context,
+    context.env.NO_TORSION_SERVICE_TOKEN,
+    'No-Torsion service'
+  );
+  if (authError) {
+    return authError;
+  }
+
+  try {
+    const body = await context.req.json() as {
+      items?: unknown;
+      targetLanguage?: unknown;
+    };
+    const items = Array.isArray(body.items)
+      ? body.items
+          .map((item) => ({
+            fieldKey:
+              item && typeof item === 'object' && typeof (item as { fieldKey?: unknown }).fieldKey === 'string'
+                ? (item as { fieldKey: string }).fieldKey
+                : '',
+            text:
+              item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string'
+                ? (item as { text: string }).text.trim()
+                : ''
+          }))
+          .filter((item) => item.fieldKey && item.text)
+          .slice(0, 6)
+      : [];
+
+    if (items.length === 0) {
+      return context.json({
+        translations: []
+      });
+    }
+
+    const translations = await translateDetailItems(context.env, {
+      items,
+      targetLanguage:
+        typeof body.targetLanguage === 'string'
+          ? body.targetLanguage
+          : undefined
+    });
+
+    return context.json({
+      translations
+    });
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Translation unavailable.'
+      },
+      500
+    );
+  }
 });
 
 app.post('/api/write', async (context) => {

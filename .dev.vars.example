@@ -13,6 +13,37 @@ WRITE_TOKEN=replace-with-write-token
 # `GET /api/data/*`、`GET /api/health` 等读取接口使用的读取 token
 READ_TOKEN=replace-with-read-token
 
+# No-Torsion 前端接入这个子服务时使用的鉴权 token
+# 对应 No-Torsion 侧的 NCT_BACKEND_SERVICE_TOKEN
+NO_TORSION_SERVICE_TOKEN=replace-with-no-torsion-token
+
+# 可选：No-Torsion 后端表单保护 secret
+# 如果留空，会回退到 FORM_PROTECTION_SECRET；如果两边都不填，则由站点上下文派生
+NO_TORSION_FORM_PROTECTION_SECRET=
+
+# 可选：No-Torsion 表单运行模式
+# true = 只返回预览，不真正进入确认 / 投递
+NO_TORSION_FORM_DRY_RUN=false
+
+# 可选：No-Torsion 主表单提交目标
+# google = 仅发 Google Form
+# d1 = 仅写 D1
+# both = 两边都发
+NO_TORSION_FORM_SUBMIT_TARGET=d1
+
+# 可选：No-Torsion 机构修正提交流向
+NO_TORSION_CORRECTION_SUBMIT_TARGET=d1
+
+# 可选：No-Torsion 主表单 / 修正表单的 Google Form 配置
+# 可以填完整 URL，也可以只填 Form ID；留空时会回退到代码中的默认表单
+NO_TORSION_GOOGLE_FORM_URL=
+NO_TORSION_FORM_ID=
+NO_TORSION_CORRECTION_GOOGLE_FORM_URL=
+NO_TORSION_CORRECTION_FORM_ID=
+
+# 可选：No-Torsion 站点地址，仅用于派生默认 secret / 记录来源
+NO_TORSION_SITE_URL=https://www.victimsunion.org
+
 # 子库向母库 `POST /api/sub/report` 上报时使用的 token
 # 这里应与主库 `nct-api-sql` 的 `SUB_REPORT_TOKEN` 保持一致
 MOTHER_REPORT_TOKEN=replace-with-report-token
@@ -33,6 +64,10 @@ MOTHER_REPORT_URL=https://api.example.com/api/sub/report
 # 可选：上报超时时间，单位毫秒
 # 本地调试时可以改小，例如 1000；生产环境建议保留较大值
 MOTHER_REPORT_TIMEOUT_MS=10000
+
+# 可选：No-Torsion 明细翻译接口
+GOOGLE_CLOUD_TRANSLATION_API_KEY=
+TRANSLATION_PROVIDER_TIMEOUT_MS=10000
 
 # 如果本地不希望真的向母库上报，可以改成空值：
 # MOTHER_REPORT_URL=
