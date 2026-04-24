@@ -639,11 +639,11 @@ function buildBirthYearOptions(): number[] {
 const BIRTH_YEAR_OPTIONS = buildBirthYearOptions();
 
 function buildFormHref(language: SupportedLanguage): string {
-  return `/no-torsion/form?lang=${encodeURIComponent(language)}`;
+  return `/form?lang=${encodeURIComponent(language)}`;
 }
 
 function buildConfirmHref(language: SupportedLanguage): string {
-  return `/no-torsion/form/confirm?lang=${encodeURIComponent(language)}`;
+  return `/form/confirm?lang=${encodeURIComponent(language)}`;
 }
 
 function formatSummaryValue(value: unknown, fallback: string): string {

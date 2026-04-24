@@ -1,4 +1,7 @@
-import type { EncryptedEnvelope, JsonObject } from '../types';
+import type {
+  LocalServiceEncryptionKeyPair,
+  RsaOaepEncryptedEnvelope,
+} from '../types';
 import { stableStringify } from './json';
 
 const encoder = new TextEncoder();
@@ -19,27 +22,15 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
+function bytesToPem(bytes: Uint8Array, label: string): string {
+  const base64 = bytesToBase64(bytes);
+  const chunks = base64.match(/.{1,64}/g) ?? [];
 
-async function importAesKey(
-  secret: string,
-  usages: Array<'encrypt' | 'decrypt'>
-): Promise<CryptoKey> {
-  const rawKey = base64ToBytes(secret);
-  if (rawKey.byteLength !== 32) {
-    throw new Error('ENCRYPTION_KEY must be a base64-encoded 32-byte value.');
-  }
-
-  return crypto.subtle.importKey(
-    'raw',
-    toArrayBuffer(rawKey),
-    { name: 'AES-GCM' },
-    false,
-    usages
-  );
+  return [
+    `-----BEGIN ${label}-----`,
+    ...chunks,
+    `-----END ${label}-----`,
+  ].join('\n');
 }
 
 export async function sha256(value: string): Promise<string> {
@@ -75,25 +66,141 @@ export async function hmacSha256(value: string, secret: string): Promise<string>
     .join('');
 }
 
-export async function encryptObject(
-  payload: JsonObject,
-  secret: string
-): Promise<EncryptedEnvelope> {
-  const key = await importAesKey(secret, ['encrypt']);
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function readPemBody(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/\\n/g, '\n')
+    .replace(/-----BEGIN [^-]+-----/g, '')
+    .replace(/-----END [^-]+-----/g, '')
+    .replace(/\s+/g, '');
+}
+
+async function importRsaEncryptionPublicKey(
+  publicKey: string
+): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'spki',
+    toArrayBuffer(base64ToBytes(readPemBody(publicKey))),
+    {
+      name: 'RSA-OAEP',
+      hash: 'SHA-256'
+    },
+    false,
+    ['encrypt']
+  );
+}
+
+async function importRsaEncryptionPrivateKey(
+  privateKey: string
+): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'pkcs8',
+    toArrayBuffer(base64ToBytes(readPemBody(privateKey))),
+    {
+      name: 'RSA-OAEP',
+      hash: 'SHA-256'
+    },
+    false,
+    ['decrypt']
+  );
+}
+
+export async function generateServiceEncryptionKeyPair(): Promise<LocalServiceEncryptionKeyPair> {
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: 'RSA-OAEP',
+      hash: 'SHA-256',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+    },
+    true,
+    ['encrypt', 'decrypt']
+  ) as CryptoKeyPair;
+  const [privateKey, publicKey] = await Promise.all([
+    crypto.subtle.exportKey('pkcs8', keyPair.privateKey) as Promise<ArrayBuffer>,
+    crypto.subtle.exportKey('spki', keyPair.publicKey) as Promise<ArrayBuffer>,
+  ]);
+
+  return {
+    privateKey: bytesToPem(new Uint8Array(privateKey), 'PRIVATE KEY'),
+    publicKey: bytesToPem(new Uint8Array(publicKey), 'PUBLIC KEY'),
+  };
+}
+
+export async function encryptJsonWithPublicKey(
+  value: unknown,
+  publicKey: string
+): Promise<RsaOaepEncryptedEnvelope> {
+  const aesKey = crypto.getRandomValues(new Uint8Array(32));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = encoder.encode(stableStringify(payload));
+  const contentKey = await crypto.subtle.importKey(
+    'raw',
+    toArrayBuffer(aesKey),
+    {
+      name: 'AES-GCM'
+    },
+    false,
+    ['encrypt']
+  );
   const ciphertext = await crypto.subtle.encrypt(
     {
       name: 'AES-GCM',
       iv: toArrayBuffer(iv)
     },
-    key,
-    toArrayBuffer(plaintext)
+    contentKey,
+    toArrayBuffer(encoder.encode(stableStringify(value)))
+  );
+  const recipientKey = await importRsaEncryptionPublicKey(publicKey);
+  const encryptedKey = await crypto.subtle.encrypt(
+    {
+      name: 'RSA-OAEP'
+    },
+    recipientKey,
+    toArrayBuffer(aesKey)
   );
 
   return {
-    algorithm: 'AES-GCM',
+    algorithm: 'RSA-OAEP-SHA-256+A256GCM',
+    encryptedKey: bytesToBase64(new Uint8Array(encryptedKey)),
     iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(ciphertext))
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
   };
+}
+
+export async function decryptJsonWithPrivateKey<T = unknown>(
+  envelope: RsaOaepEncryptedEnvelope,
+  privateKey: string
+): Promise<T> {
+  const recipientKey = await importRsaEncryptionPrivateKey(privateKey);
+  const decryptedKey = await crypto.subtle.decrypt(
+    {
+      name: 'RSA-OAEP'
+    },
+    recipientKey,
+    toArrayBuffer(base64ToBytes(envelope.encryptedKey))
+  );
+  const contentKey = await crypto.subtle.importKey(
+    'raw',
+    decryptedKey,
+    {
+      name: 'AES-GCM'
+    },
+    false,
+    ['decrypt']
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: toArrayBuffer(base64ToBytes(envelope.iv))
+    },
+    contentKey,
+    toArrayBuffer(base64ToBytes(envelope.ciphertext))
+  );
+
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(plaintext))) as T;
 }

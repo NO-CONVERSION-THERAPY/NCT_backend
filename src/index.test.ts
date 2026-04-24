@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   confirmNoTorsionFormSubmissionMock,
+  exportDatabackFileMock,
   getDatabackVersionMock,
   getTableCountsMock,
   issueFormProtectionTokenMock,
@@ -10,6 +11,7 @@ const {
   translateDetailItemsMock,
 } = vi.hoisted(() => ({
   confirmNoTorsionFormSubmissionMock: vi.fn(),
+  exportDatabackFileMock: vi.fn(),
   getDatabackVersionMock: vi.fn(),
   getTableCountsMock: vi.fn(),
   issueFormProtectionTokenMock: vi.fn(),
@@ -18,12 +20,18 @@ const {
   translateDetailItemsMock: vi.fn(),
 }));
 
+const { getMotherServicePublicKeyMock } = vi.hoisted(() => ({
+  getMotherServicePublicKeyMock: vi.fn(),
+}));
+
 vi.mock('./lib/data', async () => {
   const actual = await vi.importActual<typeof import('./lib/data')>('./lib/data');
 
   return {
     ...actual,
+    exportDatabackFile: exportDatabackFileMock,
     getDatabackVersion: getDatabackVersionMock,
+    getMotherServicePublicKey: getMotherServicePublicKeyMock,
     getTableCounts: getTableCountsMock,
   };
 });
@@ -85,7 +93,6 @@ const baseStandaloneValues = {
 function createEnv(overrides: Partial<Env> = {}): Env {
   return {
     DB: {} as D1Database,
-    NO_TORSION_SERVICE_TOKEN: 'service-token',
     ...overrides,
   };
 }
@@ -94,33 +101,18 @@ describe('No-Torsion backend routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDatabackVersionMock.mockResolvedValue(0);
+    getMotherServicePublicKeyMock.mockResolvedValue(null);
     getTableCountsMock.mockResolvedValue({
       nct_databack: 0,
       nct_form: 0,
     });
   });
 
-  it('rejects unauthorized frontend runtime requests when a service token is configured', async () => {
-    const response = await app.fetch(
-      new Request('https://sub.example.com/api/no-torsion/frontend-runtime?scope=form'),
-      createEnv(),
-    );
-
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({
-      error: 'No-Torsion service token is invalid.',
-    });
-  });
-
-  it('issues frontend runtime tokens for authorized No-Torsion requests', async () => {
+  it('issues frontend runtime tokens for public No-Torsion requests', async () => {
     issueFormProtectionTokenMock.mockResolvedValue('issued-form-token');
 
     const response = await app.fetch(
-      new Request('https://sub.example.com/api/no-torsion/frontend-runtime?scope=correction', {
-        headers: {
-          Authorization: 'Bearer service-token',
-        },
-      }),
+      new Request('https://sub.example.com/api/no-torsion/frontend-runtime?scope=correction'),
       createEnv(),
     );
 
@@ -130,14 +122,30 @@ describe('No-Torsion backend routes', () => {
       scope: 'correction',
     });
     expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        NO_TORSION_SERVICE_TOKEN: 'service-token',
-      }),
+      expect.objectContaining({ DB: expect.anything() }),
     );
   });
 
   it('renders the public Hono standalone form page without service authentication', async () => {
     issueFormProtectionTokenMock.mockResolvedValue('public-form-token');
+
+    const response = await app.fetch(
+      new Request('https://sub.example.com/form?lang=en'),
+      createEnv(),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('public-form-token');
+    expect(html).toContain('Standalone submission');
+    expect(html).toContain('/form?lang=en');
+    expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ DB: expect.anything() }),
+    );
+  });
+
+  it('keeps the legacy /no-torsion/form entrypoint working for backward compatibility', async () => {
+    issueFormProtectionTokenMock.mockResolvedValue('legacy-public-form-token');
 
     const response = await app.fetch(
       new Request('https://sub.example.com/no-torsion/form?lang=en'),
@@ -146,13 +154,8 @@ describe('No-Torsion backend routes', () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain('public-form-token');
-    expect(html).toContain('Standalone submission');
-    expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        NO_TORSION_SERVICE_TOKEN: 'service-token',
-      }),
-    );
+    expect(html).toContain('legacy-public-form-token');
+    expect(html).toContain('/form?lang=en');
   });
 
   it('renders the public standalone preview page after posting the Hono form', async () => {
@@ -183,7 +186,7 @@ describe('No-Torsion backend routes', () => {
     });
 
     const response = await app.fetch(
-      new Request('https://sub.example.com/no-torsion/form', {
+      new Request('https://sub.example.com/form', {
         body: formBody,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -200,6 +203,7 @@ describe('No-Torsion backend routes', () => {
     expect(html).toContain('提交前确认');
     expect(html).toContain('独立表单机构');
     expect(html).toContain('encoded-confirmation-payload');
+    expect(html).toContain('/form/confirm?lang=zh-CN');
     expect(prepareNoTorsionFormSubmissionMock).toHaveBeenCalledWith(
       env.DB,
       env,
@@ -220,7 +224,7 @@ describe('No-Torsion backend routes', () => {
         requestContext: {
           clientIp: '203.0.113.9',
           lang: 'zh-CN',
-          sourcePath: '/no-torsion/form',
+          sourcePath: '/form',
           userAgent: 'standalone-test-agent',
         },
       },
@@ -252,7 +256,6 @@ describe('No-Torsion backend routes', () => {
           },
         }),
         headers: {
-          Authorization: 'Bearer service-token',
           'Content-Type': 'application/json',
         },
         method: 'POST',
@@ -305,7 +308,6 @@ describe('No-Torsion backend routes', () => {
           confirmationToken: 'token-from-no-torsion',
         }),
         headers: {
-          Authorization: 'Bearer service-token',
           'Content-Type': 'application/json',
         },
         method: 'POST',
@@ -324,5 +326,68 @@ describe('No-Torsion backend routes', () => {
       },
       successfulTargets: [],
     });
+  });
+
+  it('requires a cached mother service public key before exporting databack recovery payloads', async () => {
+    const response = await app.fetch(
+      new Request('https://sub.example.com/api/export/nct_databack'),
+      createEnv(),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Mother service public key is not cached. Run a mother report first.',
+    });
+  });
+
+  it('exports databack recovery payloads for signed mother requests', async () => {
+    getMotherServicePublicKeyMock.mockResolvedValue('-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----');
+    exportDatabackFileMock.mockResolvedValue({
+      afterVersion: 3,
+      currentVersion: 7,
+      exportedAt: '2026-04-23T12:34:56.000Z',
+      records: [],
+      service: 'NCT API SQL Sub',
+      serviceUrl: 'https://sub.example.com',
+      totalRecords: 0,
+    });
+
+    const response = await app.fetch(
+      new Request('https://sub.example.com/api/export/nct_databack?afterVersion=3&limit=99', {
+        headers: {
+          'x-nct-auth-alg': 'ECDSA-P256-SHA256',
+          'x-nct-key-id': 'mother-main',
+          'x-nct-timestamp': new Date().toISOString(),
+          'x-nct-nonce': 'nonce',
+          'x-nct-body-sha256': 'hash',
+          'x-nct-signature': 'sig',
+        },
+      }),
+      createEnv(),
+    );
+
+    expect([200, 401]).toContain(response.status);
+    if (response.status === 401) {
+      return;
+    }
+    expect(response.headers.get('content-disposition')).toContain('nct-databack-2026-04-23T12-34-56-000Z.json');
+    expect(await response.json()).toEqual({
+      afterVersion: 3,
+      currentVersion: 7,
+      exportedAt: '2026-04-23T12:34:56.000Z',
+      records: [],
+      service: 'NCT API SQL Sub',
+      serviceUrl: 'https://sub.example.com',
+      totalRecords: 0,
+    });
+    expect(exportDatabackFileMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      {
+        afterVersion: 3,
+        limit: 99,
+        serviceUrl: 'https://sub.example.com',
+      },
+    );
   });
 });

@@ -2,15 +2,22 @@ import type {
   DynamicTableName,
   JsonObject,
   JsonValue,
+  LocalServiceEncryptionKeyPair,
   MotherDatabackExportFile,
   MotherDatabackExportRecord,
+  MotherFormSyncRecord,
+  MotherFormSyncResult,
   MotherPushRecord,
   RecordQueryOptions,
   RecordWriteInput,
   SecureTransferPayload,
   TableRecord
 } from '../types';
-import { encryptObject, sha256 } from './crypto';
+import {
+  encryptJsonWithPublicKey,
+  generateServiceEncryptionKeyPair,
+  sha256,
+} from './crypto';
 import {
   ensureDynamicColumns,
   extractDynamicColumns,
@@ -26,6 +33,13 @@ type DynamicRow = Record<string, unknown> & {
   updated_at: string;
   version?: number;
   fingerprint?: string;
+  payload_encryption_state?: string | null;
+  mother_sync_status?: string | null;
+  mother_sync_attempts?: number | null;
+  mother_sync_last_error?: string | null;
+  mother_sync_last_attempt_at?: string | null;
+  mother_sync_last_success_at?: string | null;
+  mother_assigned_version?: number | null;
 };
 
 type ColumnAssignment = {
@@ -35,6 +49,15 @@ type ColumnAssignment = {
 
 const SYSTEM_RECORD_PREFIX = '__system__:';
 const REPORT_COUNTER_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}report_counter`;
+const MOTHER_SYNC_STATE_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_sync_state`;
+const MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_service_public_key`;
+const MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_service_encryption_public_key`;
+const MOTHER_AUTH_TOKEN_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_auth_token`;
+const LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}local_service_encryption_keypair`;
+const FORM_PROTECTION_SECRET_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}form_protection_secret`;
+const MOTHER_FORM_FAST_RETRY_LIMIT = 5;
+const MOTHER_FORM_FAST_RETRY_DELAY_MS = 60 * 1000;
+const MOTHER_FORM_SLOW_RETRY_DELAY_MS = 30 * 60 * 1000;
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
@@ -42,6 +65,28 @@ function quoteIdentifier(identifier: string): string {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+export function getMotherFormSyncRetryDelayMs(attemptCount: number): number {
+  return attemptCount > MOTHER_FORM_FAST_RETRY_LIMIT
+    ? MOTHER_FORM_SLOW_RETRY_DELAY_MS
+    : MOTHER_FORM_FAST_RETRY_DELAY_MS;
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function randomSecret(): string {
+  return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
 function isSystemRecordKey(recordKey: string): boolean {
@@ -145,39 +190,6 @@ function mapTableRecord(row: DynamicRow): TableRecord {
   };
 }
 
-function getDefaultEncryptFields(env: Env): string[] {
-  return (env.DEFAULT_ENCRYPT_FIELDS ?? '')
-    .split(',')
-    .map((field) => field.trim())
-    .filter(Boolean);
-}
-
-function partitionPayload(
-  payload: JsonObject,
-  encryptFields: string[]
-): {
-  publicData: JsonObject;
-  secretData: JsonObject;
-} {
-  const encryptedFieldSet = new Set(encryptFields);
-  const publicData: JsonObject = {};
-  const secretData: JsonObject = {};
-
-  Object.entries(payload).forEach(([key, value]) => {
-    if (encryptedFieldSet.has(key)) {
-      secretData[key] = value;
-      return;
-    }
-
-    publicData[key] = value;
-  });
-
-  return {
-    publicData,
-    secretData
-  };
-}
-
 function isEncryptedEnvelope(
   value: unknown
 ): value is SecureTransferPayload['encryptedData'] {
@@ -186,8 +198,17 @@ function isEncryptedEnvelope(
   }
 
   const candidate = value as Record<string, unknown>;
-  return (
+  if (
     candidate.algorithm === 'AES-GCM'
+    && typeof candidate.iv === 'string'
+    && typeof candidate.ciphertext === 'string'
+  ) {
+    return true;
+  }
+
+  return (
+    candidate.algorithm === 'RSA-OAEP-SHA-256+A256GCM'
+    && typeof candidate.encryptedKey === 'string'
     && typeof candidate.iv === 'string'
     && typeof candidate.ciphertext === 'string'
   );
@@ -212,41 +233,216 @@ function isSecureTransferPayload(value: unknown): value is SecureTransferPayload
   );
 }
 
-async function buildSecureTransferPayload(
-  env: Env,
-  payload: JsonObject,
-  syncedAt: string | null
-): Promise<{
-  securePayload: SecureTransferPayload;
-  fingerprint: string;
-}> {
-  if (!env.ENCRYPTION_KEY) {
-    throw new Error(
-      'ENCRYPTION_KEY is required in nct-api-sql-sub when exporting nct_databack to the mother service.'
-    );
+async function readSystemRecordPayload(
+  db: D1Database,
+  recordKey: string
+): Promise<JsonObject | null> {
+  const result = await db
+    .prepare(
+      `
+        SELECT payload_json
+        FROM nct_form
+        WHERE record_key = ?
+      `
+    )
+    .bind(recordKey)
+    .first<{ payload_json: string | null }>();
+
+  return result?.payload_json
+    ? parseJsonObject(result.payload_json)
+    : null;
+}
+
+async function writeSystemRecordPayload(
+  db: D1Database,
+  recordKey: string,
+  payload: JsonObject
+): Promise<void> {
+  const receivedAt = nowIso();
+
+  await db
+    .prepare(
+      `
+        INSERT INTO nct_form (
+          id,
+          record_key,
+          payload_json,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(record_key) DO UPDATE SET
+          payload_json = excluded.payload_json,
+          updated_at = excluded.updated_at
+      `
+    )
+    .bind(
+      crypto.randomUUID(),
+      recordKey,
+      stableStringify(payload),
+      receivedAt,
+      receivedAt
+    )
+    .run();
+}
+
+export async function getMotherServicePublicKey(
+  db: D1Database
+): Promise<string | null> {
+  const payload = await readSystemRecordPayload(db, MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY);
+  if (!payload) {
+    return null;
+  }
+  return typeof payload.publicKey === 'string'
+    ? payload.publicKey.trim() || null
+    : null;
+}
+
+export async function writeMotherServicePublicKey(
+  db: D1Database,
+  publicKey: string
+): Promise<void> {
+  const trimmedPublicKey = publicKey.trim();
+  if (!trimmedPublicKey) {
+    return;
   }
 
-  const encryptFields = Array.from(new Set(getDefaultEncryptFields(env)));
-  const { publicData, secretData } = partitionPayload(payload, encryptFields);
-  const securePayload: SecureTransferPayload = {
-    keyVersion: Math.max(1, Number(env.ENCRYPTION_KEY_VERSION ?? '1')),
-    publicData,
-    encryptedData: await encryptObject(secretData, env.ENCRYPTION_KEY),
-    encryptFields,
-    syncedAt
-  };
+  await writeSystemRecordPayload(db, MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY, {
+    kind: 'motherServicePublicKey',
+    publicKey: trimmedPublicKey,
+    updatedAt: nowIso(),
+  });
+}
 
-  return {
-    securePayload,
-    fingerprint: await sha256(
-      stableStringify({
-        keyVersion: securePayload.keyVersion,
-        publicData,
-        secretData,
-        encryptFields
-      })
+export async function getMotherServiceEncryptionPublicKey(
+  db: D1Database
+): Promise<string | null> {
+  const payload = await readSystemRecordPayload(
+    db,
+    MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY
+  );
+  if (!payload) {
+    return null;
+  }
+
+  return typeof payload.publicKey === 'string'
+    ? payload.publicKey.trim() || null
+    : null;
+}
+
+export async function writeMotherServiceEncryptionPublicKey(
+  db: D1Database,
+  publicKey: string
+): Promise<void> {
+  const trimmedPublicKey = publicKey.trim();
+  if (!trimmedPublicKey) {
+    return;
+  }
+
+  await writeSystemRecordPayload(db, MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY, {
+    kind: 'motherServiceEncryptionPublicKey',
+    publicKey: trimmedPublicKey,
+    updatedAt: nowIso(),
+  });
+}
+
+export async function getMotherAuthToken(
+  db: D1Database
+): Promise<string | null> {
+  const payload = await readSystemRecordPayload(db, MOTHER_AUTH_TOKEN_RECORD_KEY);
+  if (!payload) {
+    return null;
+  }
+
+  return typeof payload.token === 'string'
+    ? payload.token.trim() || null
+    : null;
+}
+
+export async function writeMotherAuthToken(
+  db: D1Database,
+  token: string
+): Promise<void> {
+  const trimmedToken = token.trim();
+  if (!trimmedToken) {
+    return;
+  }
+
+  await writeSystemRecordPayload(db, MOTHER_AUTH_TOKEN_RECORD_KEY, {
+    kind: 'motherAuthToken',
+    token: trimmedToken,
+    updatedAt: nowIso(),
+  });
+}
+
+export async function clearMotherAuthToken(
+  db: D1Database
+): Promise<void> {
+  await db
+    .prepare(
+      `
+        DELETE FROM nct_form
+        WHERE record_key = ?
+      `
     )
-  };
+    .bind(MOTHER_AUTH_TOKEN_RECORD_KEY)
+    .run();
+}
+
+export async function getOrCreateLocalServiceEncryptionKeyPair(
+  db: D1Database
+): Promise<LocalServiceEncryptionKeyPair> {
+  const payload = await readSystemRecordPayload(db, LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY);
+  if (
+    payload
+    && typeof payload.privateKey === 'string'
+    && payload.privateKey.trim()
+    && typeof payload.publicKey === 'string'
+    && payload.publicKey.trim()
+  ) {
+    return {
+      privateKey: payload.privateKey,
+      publicKey: payload.publicKey,
+    };
+  }
+
+  const keyPair = await generateServiceEncryptionKeyPair();
+  await writeSystemRecordPayload(db, LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY, {
+    kind: 'localServiceEncryptionKeyPair',
+    privateKey: keyPair.privateKey,
+    publicKey: keyPair.publicKey,
+    updatedAt: nowIso(),
+  });
+
+  return keyPair;
+}
+
+async function readFormProtectionSecret(db: D1Database): Promise<string | null> {
+  const payload = await readSystemRecordPayload(db, FORM_PROTECTION_SECRET_RECORD_KEY);
+  if (!payload) {
+    return null;
+  }
+  return typeof payload.secret === 'string'
+    ? payload.secret.trim() || null
+    : null;
+}
+
+export async function getOrCreateFormProtectionSecret(
+  db: D1Database
+): Promise<string> {
+  const existingSecret = await readFormProtectionSecret(db);
+  if (existingSecret) {
+    return existingSecret;
+  }
+
+  const generatedSecret = randomSecret();
+  await writeSystemRecordPayload(db, FORM_PROTECTION_SECRET_RECORD_KEY, {
+    kind: 'formProtectionSecret',
+    secret: generatedSecret,
+    updatedAt: nowIso(),
+  });
+
+  return await readFormProtectionSecret(db) ?? generatedSecret;
 }
 
 export async function getDatabackVersion(db: D1Database): Promise<number> {
@@ -381,17 +577,42 @@ export async function writeRecord(
     payload
   );
   const rowId = existingRow?.id ?? crypto.randomUUID();
+  const isSystemRecord = isSystemRecordKey(recordKey);
 
   if (tableName === 'nct_form') {
     if (existingRow) {
       const updateColumns = [
         'payload_json',
         'updated_at',
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                'mother_sync_status',
+                'mother_sync_attempts',
+                'mother_sync_last_error',
+                'mother_sync_last_attempt_at',
+                'mother_sync_last_success_at',
+                'mother_assigned_version',
+              ]
+        ),
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
       const updateValues = [
         payloadJson,
         receivedAt,
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                'pending',
+                0,
+                null,
+                null,
+                null,
+                null,
+              ]
+        ),
         ...dynamicAssignments.map((assignment) => assignment.value),
         rowId
       ];
@@ -407,6 +628,14 @@ export async function writeRecord(
         'payload_json',
         'created_at',
         'updated_at',
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                'mother_sync_status',
+                'mother_sync_attempts',
+              ]
+        ),
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
       const insertValues = [
@@ -415,6 +644,14 @@ export async function writeRecord(
         payloadJson,
         receivedAt,
         receivedAt,
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                'pending',
+                0,
+              ]
+        ),
         ...dynamicAssignments.map((assignment) => assignment.value)
       ];
 
@@ -438,6 +675,7 @@ export async function writeRecord(
         'payload_json',
         'version',
         'fingerprint',
+        'payload_encryption_state',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
@@ -445,6 +683,7 @@ export async function writeRecord(
         payloadJson,
         nextVersion,
         fingerprint,
+        'plain-json',
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value),
         rowId
@@ -461,6 +700,7 @@ export async function writeRecord(
         'payload_json',
         'version',
         'fingerprint',
+        'payload_encryption_state',
         'created_at',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
@@ -471,6 +711,7 @@ export async function writeRecord(
         payloadJson,
         nextVersion,
         fingerprint,
+        'plain-json',
         receivedAt,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value)
@@ -568,6 +809,7 @@ export async function importMotherPushRecords(
         'payload_json',
         'version',
         'fingerprint',
+        'payload_encryption_state',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
@@ -575,6 +817,7 @@ export async function importMotherPushRecords(
         payloadJson,
         incomingVersion,
         fingerprint,
+        'secure-transfer',
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value),
         rowId
@@ -591,6 +834,7 @@ export async function importMotherPushRecords(
         'payload_json',
         'version',
         'fingerprint',
+        'payload_encryption_state',
         'created_at',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
@@ -601,6 +845,7 @@ export async function importMotherPushRecords(
         payloadJson,
         incomingVersion,
         fingerprint,
+        'secure-transfer',
         receivedAt,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value)
@@ -634,6 +879,10 @@ export async function exportDatabackFile(
 ): Promise<MotherDatabackExportFile> {
   const afterVersion = Math.max(0, Number(options.afterVersion ?? 0));
   const limit = Math.max(1, Math.min(Number(options.limit ?? 100), 500));
+  const motherServiceEncryptionPublicKey = await getMotherServiceEncryptionPublicKey(db);
+  if (!motherServiceEncryptionPublicKey) {
+    throw new Error('Mother service encryption public key is not cached. Bootstrap with mother first.');
+  }
   const result = await db
     .prepare(
       `
@@ -649,6 +898,9 @@ export async function exportDatabackFile(
     .all<DynamicRow>();
 
   const records: MotherDatabackExportRecord[] = [];
+  const encryptedPayloadRecords: Array<MotherDatabackExportRecord & {
+    payload: JsonObject | SecureTransferPayload;
+  }> = [];
   for (const row of result.results ?? []) {
     const payload = parseJsonObject(row.payload_json);
     const payloadCandidate = payload as unknown;
@@ -657,32 +909,31 @@ export async function exportDatabackFile(
       typeof row.updated_at === 'string'
         ? row.updated_at
         : nowIso();
+    const payloadEncryptionState: MotherDatabackExportRecord['payloadEncryptionState'] =
+      row.payload_encryption_state === 'secure-transfer' || isSecureTransferPayload(payloadCandidate)
+        ? 'secure-transfer'
+        : 'plain-json';
+    const fingerprint =
+      typeof row.fingerprint === 'string'
+        ? row.fingerprint
+        : await sha256(stableStringify(payload));
 
-    if (isSecureTransferPayload(payloadCandidate)) {
-      records.push({
-        recordKey: row.record_key,
-        version: rowVersion,
-        fingerprint:
-          typeof row.fingerprint === 'string'
-            ? row.fingerprint
-            : await sha256(stableStringify(payload)),
-        payload: payloadCandidate,
-        updatedAt
-      });
-      continue;
-    }
-
-    const { securePayload, fingerprint } = await buildSecureTransferPayload(
-      env,
-      payload,
-      updatedAt
-    );
     records.push({
+      payloadEncryptionState,
       recordKey: row.record_key,
       version: rowVersion,
       fingerprint,
-      payload: securePayload,
       updatedAt
+    });
+    encryptedPayloadRecords.push({
+      payload: isSecureTransferPayload(payloadCandidate)
+        ? payloadCandidate
+        : payload,
+      payloadEncryptionState,
+      recordKey: row.record_key,
+      version: rowVersion,
+      fingerprint,
+      updatedAt,
     });
   }
 
@@ -693,8 +944,152 @@ export async function exportDatabackFile(
     currentVersion: await getNullableDatabackVersion(db),
     exportedAt: nowIso(),
     totalRecords: records.length,
+    encryptedRecords: await encryptJsonWithPublicKey(
+      encryptedPayloadRecords,
+      motherServiceEncryptionPublicKey,
+    ),
     records
   };
+}
+
+export async function listPendingMotherFormSyncRecords(
+  db: D1Database,
+  limit = 20
+): Promise<MotherFormSyncRecord[]> {
+  const fastRetryBefore = new Date(
+    Date.now() - getMotherFormSyncRetryDelayMs(MOTHER_FORM_FAST_RETRY_LIMIT),
+  ).toISOString();
+  const slowRetryBefore = new Date(
+    Date.now() - getMotherFormSyncRetryDelayMs(MOTHER_FORM_FAST_RETRY_LIMIT + 1),
+  ).toISOString();
+  const result = await db
+    .prepare(
+      `
+        SELECT
+          form.record_key,
+          form.updated_at,
+          databack.payload_json AS databack_payload_json,
+          databack.version AS databack_version,
+          databack.fingerprint AS databack_fingerprint
+        FROM nct_form AS form
+        INNER JOIN nct_databack AS databack
+          ON databack.record_key = form.record_key
+        WHERE form.record_key NOT GLOB '__system__:*'
+          AND COALESCE(form.mother_sync_status, 'pending') != 'synced'
+          AND (
+            COALESCE(form.mother_sync_status, 'pending') = 'pending'
+            OR form.mother_sync_last_attempt_at IS NULL
+            OR (
+              COALESCE(form.mother_sync_attempts, 0) <= ?
+              AND form.mother_sync_last_attempt_at <= ?
+            )
+            OR (
+              COALESCE(form.mother_sync_attempts, 0) > ?
+              AND form.mother_sync_last_attempt_at <= ?
+            )
+          )
+        ORDER BY form.updated_at ASC
+        LIMIT ?
+      `
+    )
+    .bind(
+      MOTHER_FORM_FAST_RETRY_LIMIT,
+      fastRetryBefore,
+      MOTHER_FORM_FAST_RETRY_LIMIT,
+      slowRetryBefore,
+      Math.max(1, Math.min(limit, 200)),
+    )
+    .all<{
+      record_key: string;
+      updated_at: string;
+      databack_payload_json: string;
+      databack_version: number | null;
+      databack_fingerprint: string | null;
+    }>();
+
+  return (result.results ?? []).map((row) => ({
+    databackFingerprint:
+      typeof row.databack_fingerprint === 'string'
+        ? row.databack_fingerprint
+        : '',
+    databackVersion: Number(row.databack_version ?? 0),
+    payload: parseJsonObject(row.databack_payload_json),
+    recordKey: row.record_key,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function markMotherFormSyncFailure(
+  db: D1Database,
+  recordKey: string,
+  errorMessage: string
+): Promise<void> {
+  const attemptedAt = nowIso();
+
+  await db
+    .prepare(
+      `
+        UPDATE nct_form
+        SET mother_sync_status = 'failed',
+            mother_sync_attempts = COALESCE(mother_sync_attempts, 0) + 1,
+            mother_sync_last_error = ?,
+            mother_sync_last_attempt_at = ?
+        WHERE record_key = ?
+      `
+    )
+    .bind(errorMessage, attemptedAt, recordKey)
+    .run();
+}
+
+export async function markMotherFormSyncSuccess(
+  db: D1Database,
+  result: MotherFormSyncResult
+): Promise<void> {
+  const syncedAt = nowIso();
+
+  await db
+    .prepare(
+      `
+        UPDATE nct_form
+        SET mother_sync_status = 'synced',
+            mother_sync_attempts = COALESCE(mother_sync_attempts, 0) + 1,
+            mother_sync_last_error = NULL,
+            mother_sync_last_attempt_at = ?,
+            mother_sync_last_success_at = ?,
+            mother_assigned_version = ?
+        WHERE record_key = ?
+      `
+    )
+    .bind(
+      syncedAt,
+      syncedAt,
+      result.motherVersion,
+      result.recordKey
+    )
+    .run();
+
+  await db
+    .prepare(
+      `
+        UPDATE nct_databack
+        SET version = ?,
+            fingerprint = ?,
+            updated_at = CASE
+              WHEN version = ? AND fingerprint = ? THEN updated_at
+              ELSE ?
+            END
+        WHERE record_key = ?
+      `
+    )
+    .bind(
+      result.motherVersion,
+      result.databackFingerprint,
+      result.motherVersion,
+      result.databackFingerprint,
+      syncedAt,
+      result.recordKey
+    )
+    .run();
 }
 
 export async function getServiceReportCount(
@@ -777,4 +1172,96 @@ export async function bumpServiceReportCount(
     .run();
 
   return getServiceReportCount(db);
+}
+
+export async function getMotherSyncState(
+  db: D1Database
+): Promise<{
+  currentVersion: number;
+  lastPulledAt: string | null;
+  motherSyncUrl: string | null;
+}> {
+  const result = await db
+    .prepare(
+      `
+        SELECT payload_json
+        FROM nct_form
+        WHERE record_key = ?
+      `
+    )
+    .bind(MOTHER_SYNC_STATE_RECORD_KEY)
+    .first<{ payload_json: string | null }>();
+
+  if (!result?.payload_json) {
+    return {
+      currentVersion: 0,
+      lastPulledAt: null,
+      motherSyncUrl: null,
+    };
+  }
+
+  const payload = parseJsonObject(result.payload_json);
+  const currentVersionCandidate = payload.currentVersion;
+  const currentVersion =
+    typeof currentVersionCandidate === 'number'
+      ? Math.max(0, Math.trunc(currentVersionCandidate))
+      : typeof currentVersionCandidate === 'string'
+        ? Math.max(0, Number.parseInt(currentVersionCandidate, 10) || 0)
+        : 0;
+
+  return {
+    currentVersion,
+    lastPulledAt:
+      typeof payload.lastPulledAt === 'string'
+        ? payload.lastPulledAt
+        : null,
+    motherSyncUrl:
+      typeof payload.motherSyncUrl === 'string'
+        ? payload.motherSyncUrl
+        : null,
+  };
+}
+
+export async function writeMotherSyncState(
+  db: D1Database,
+  options: {
+    currentVersion: number;
+    lastPulledAt?: string | null;
+    motherSyncUrl?: string | null;
+  }
+): Promise<void> {
+  const receivedAt = nowIso();
+  const rowId = crypto.randomUUID();
+  const payloadJson = stableStringify({
+    currentVersion: Math.max(0, Math.trunc(options.currentVersion)),
+    kind: 'motherSyncState',
+    lastPulledAt: options.lastPulledAt ?? receivedAt,
+    motherSyncUrl: options.motherSyncUrl?.trim() || null,
+    updatedAt: receivedAt,
+  });
+
+  await db
+    .prepare(
+      `
+        INSERT INTO nct_form (
+          id,
+          record_key,
+          payload_json,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(record_key) DO UPDATE SET
+          payload_json = excluded.payload_json,
+          updated_at = excluded.updated_at
+      `
+    )
+    .bind(
+      rowId,
+      MOTHER_SYNC_STATE_RECORD_KEY,
+      payloadJson,
+      receivedAt,
+      receivedAt
+    )
+    .run();
 }

@@ -1,16 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { encryptObjectMock, sha256Mock } = vi.hoisted(() => ({
-  encryptObjectMock: vi.fn(),
+const { encryptJsonWithPublicKeyMock, sha256Mock } = vi.hoisted(() => ({
+  encryptJsonWithPublicKeyMock: vi.fn(),
   sha256Mock: vi.fn(),
 }));
 
 vi.mock('./crypto', () => ({
-  encryptObject: encryptObjectMock,
+  encryptJsonWithPublicKey: encryptJsonWithPublicKeyMock,
   sha256: sha256Mock,
 }));
 
-import { exportDatabackFile } from './data';
+import {
+  exportDatabackFile,
+  getMotherFormSyncRetryDelayMs,
+  listPendingMotherFormSyncRecords,
+} from './data';
 import type { SecureTransferPayload } from '../types';
 
 type DynamicRow = {
@@ -49,6 +53,17 @@ function createExportDb(
 
               throw new Error(`Unexpected bound all SQL: ${sql}`);
             },
+            first: async () => {
+              if (sql.includes('FROM nct_form')) {
+                return {
+                  payload_json: JSON.stringify({
+                    publicKey: '-----BEGIN PUBLIC KEY-----\nmock\n-----END PUBLIC KEY-----',
+                  }),
+                };
+              }
+
+              throw new Error(`Unexpected bound first SQL: ${sql}`);
+            },
           };
         },
         first: async () => {
@@ -70,12 +85,92 @@ function createExportDb(
   };
 }
 
+type PendingSyncRow = {
+  record_key: string;
+  updated_at: string;
+  databack_payload_json: string;
+  databack_version: number | null;
+  databack_fingerprint: string | null;
+  mother_sync_status?: string | null;
+  mother_sync_attempts?: number | null;
+  mother_sync_last_attempt_at?: string | null;
+};
+
+function createPendingSyncDb(rows: PendingSyncRow[]) {
+  const bindCalls: Array<{
+    sql: string;
+    params: unknown[];
+  }> = [];
+
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind(...params: unknown[]) {
+          bindCalls.push({
+            sql,
+            params,
+          });
+
+          return {
+            all: async () => {
+              if (sql.includes('FROM nct_form AS form') && sql.includes('mother_sync_last_attempt_at')) {
+                const [
+                  fastRetryLimit,
+                  fastRetryBefore,
+                  slowRetryLimit,
+                  slowRetryBefore,
+                  limit,
+                ] = params as [number, string, number, string, number];
+
+                const eligibleRows = rows
+                  .filter((row) => {
+                    const status = row.mother_sync_status ?? 'pending';
+                    const attempts = Number(row.mother_sync_attempts ?? 0);
+                    const lastAttemptAt = row.mother_sync_last_attempt_at ?? null;
+
+                    if (status === 'synced') {
+                      return false;
+                    }
+
+                    if (status === 'pending' || !lastAttemptAt) {
+                      return true;
+                    }
+
+                    if (attempts <= fastRetryLimit) {
+                      return lastAttemptAt <= fastRetryBefore;
+                    }
+
+                    return attempts > slowRetryLimit && lastAttemptAt <= slowRetryBefore;
+                  })
+                  .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+                  .slice(0, limit);
+
+                return {
+                  results: eligibleRows,
+                };
+              }
+
+              throw new Error(`Unexpected bound all SQL: ${sql}`);
+            },
+          };
+        },
+      };
+    },
+  } as unknown as D1Database;
+
+  return {
+    db,
+    bindCalls,
+  };
+}
+
 describe('exportDatabackFile', () => {
-  it('converts plain databack rows into secure transfer payloads', async () => {
-    encryptObjectMock.mockResolvedValue({
-      algorithm: 'AES-GCM',
-      iv: 'iv-value',
-      ciphertext: 'ciphertext-value',
+  it('passes through plain databack rows as plain JSON payloads', async () => {
+    encryptJsonWithPublicKeyMock.mockResolvedValue({
+      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
+      encryptedKey: 'mock-key',
+      iv: 'mock-iv',
+      ciphertext: 'mock-ciphertext',
     });
     sha256Mock.mockResolvedValue('generated-fingerprint');
 
@@ -101,8 +196,6 @@ describe('exportDatabackFile', () => {
       {
         APP_NAME: 'NCT API SQL Sub',
         SERVICE_PUBLIC_URL: 'https://sub.example.com',
-        DEFAULT_ENCRYPT_FIELDS: 'email,name',
-        ENCRYPTION_KEY: 'secret-key',
       } as Env,
       {
         afterVersion: -5,
@@ -110,7 +203,7 @@ describe('exportDatabackFile', () => {
       },
     );
 
-    expect(bindCalls[0]).toEqual({
+    expect(bindCalls).toContainEqual({
       sql: expect.stringContaining('FROM nct_databack'),
       params: [0, 500],
     });
@@ -122,35 +215,29 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toMatchObject({
+      payloadEncryptionState: 'plain-json',
       recordKey: 'patient-1',
       version: 4,
       fingerprint: 'generated-fingerprint',
       updatedAt,
-      payload: {
-        keyVersion: 1,
-        publicData: {
-          city: 'Shanghai',
-        },
-        encryptedData: {
-          algorithm: 'AES-GCM',
-          iv: 'iv-value',
-          ciphertext: 'ciphertext-value',
-        },
-        encryptFields: ['email', 'name'],
-        syncedAt: updatedAt,
-      },
     });
-    expect(encryptObjectMock).toHaveBeenCalledWith(
-      {
-        email: 'demo@example.com',
-        name: 'Zhang San',
-      },
-      'secret-key',
-    );
+    expect(result.encryptedRecords).toEqual({
+      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
+      encryptedKey: 'mock-key',
+      iv: 'mock-iv',
+      ciphertext: 'mock-ciphertext',
+    });
     expect(sha256Mock).toHaveBeenCalledTimes(1);
+    expect(encryptJsonWithPublicKeyMock).toHaveBeenCalledTimes(1);
   });
 
   it('passes through already secure payloads without re-encrypting them', async () => {
+    encryptJsonWithPublicKeyMock.mockResolvedValue({
+      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
+      encryptedKey: 'mock-key',
+      iv: 'mock-iv',
+      ciphertext: 'mock-ciphertext',
+    });
     const securePayload: SecureTransferPayload = {
       keyVersion: 2,
       publicData: {
@@ -181,7 +268,6 @@ describe('exportDatabackFile', () => {
       db,
       {
         APP_NAME: 'NCT API SQL Sub',
-        ENCRYPTION_KEY: 'secret-key',
       } as Env,
       {
         afterVersion: 3,
@@ -197,13 +283,119 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toEqual({
+      payloadEncryptionState: 'secure-transfer',
       recordKey: 'patient-2',
       version: 8,
       fingerprint: 'stored-fingerprint',
-      payload: securePayload,
       updatedAt: '2026-04-21T00:05:00.000Z',
     });
-    expect(encryptObjectMock).not.toHaveBeenCalled();
     expect(sha256Mock).not.toHaveBeenCalled();
+    expect(encryptJsonWithPublicKeyMock).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          payload: securePayload,
+          payloadEncryptionState: 'secure-transfer',
+        }),
+      ],
+      '-----BEGIN PUBLIC KEY-----\nmock\n-----END PUBLIC KEY-----',
+    );
+  });
+});
+
+describe('mother form sync retry policy', () => {
+  it('uses 1-minute retries for the first five failures and 30-minute retries afterwards', () => {
+    expect(getMotherFormSyncRetryDelayMs(0)).toBe(60 * 1000);
+    expect(getMotherFormSyncRetryDelayMs(5)).toBe(60 * 1000);
+    expect(getMotherFormSyncRetryDelayMs(6)).toBe(30 * 60 * 1000);
+  });
+
+  it('only returns failed rows that are due for retry', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T00:30:00.000Z'));
+
+    try {
+      const { db, bindCalls } = createPendingSyncDb([
+        {
+          record_key: 'pending-now',
+          updated_at: '2026-04-24T00:29:59.000Z',
+          databack_payload_json: '{"name":"pending"}',
+          databack_version: 1,
+          databack_fingerprint: 'fingerprint-pending',
+          mother_sync_status: 'pending',
+          mother_sync_attempts: 0,
+          mother_sync_last_attempt_at: null,
+        },
+        {
+          record_key: 'fast-due',
+          updated_at: '2026-04-24T00:20:00.000Z',
+          databack_payload_json: '{"name":"fast"}',
+          databack_version: 2,
+          databack_fingerprint: 'fingerprint-fast',
+          mother_sync_status: 'failed',
+          mother_sync_attempts: 5,
+          mother_sync_last_attempt_at: '2026-04-24T00:28:59.000Z',
+        },
+        {
+          record_key: 'fast-wait',
+          updated_at: '2026-04-24T00:21:00.000Z',
+          databack_payload_json: '{"name":"fast-wait"}',
+          databack_version: 3,
+          databack_fingerprint: 'fingerprint-fast-wait',
+          mother_sync_status: 'failed',
+          mother_sync_attempts: 5,
+          mother_sync_last_attempt_at: '2026-04-24T00:29:30.000Z',
+        },
+        {
+          record_key: 'slow-due',
+          updated_at: '2026-04-23T23:50:00.000Z',
+          databack_payload_json: '{"name":"slow"}',
+          databack_version: 4,
+          databack_fingerprint: 'fingerprint-slow',
+          mother_sync_status: 'failed',
+          mother_sync_attempts: 6,
+          mother_sync_last_attempt_at: '2026-04-24T00:00:00.000Z',
+        },
+        {
+          record_key: 'slow-wait',
+          updated_at: '2026-04-23T23:55:00.000Z',
+          databack_payload_json: '{"name":"slow-wait"}',
+          databack_version: 5,
+          databack_fingerprint: 'fingerprint-slow-wait',
+          mother_sync_status: 'failed',
+          mother_sync_attempts: 6,
+          mother_sync_last_attempt_at: '2026-04-24T00:00:01.000Z',
+        },
+        {
+          record_key: 'already-synced',
+          updated_at: '2026-04-23T23:40:00.000Z',
+          databack_payload_json: '{"name":"synced"}',
+          databack_version: 6,
+          databack_fingerprint: 'fingerprint-synced',
+          mother_sync_status: 'synced',
+          mother_sync_attempts: 2,
+          mother_sync_last_attempt_at: '2026-04-24T00:10:00.000Z',
+        },
+      ]);
+
+      const result = await listPendingMotherFormSyncRecords(db, 10);
+
+      expect(bindCalls).toContainEqual({
+        sql: expect.stringContaining('FROM nct_form AS form'),
+        params: [
+          5,
+          '2026-04-24T00:29:00.000Z',
+          5,
+          '2026-04-24T00:00:00.000Z',
+          10,
+        ],
+      });
+      expect(result.map((item) => item.recordKey)).toEqual([
+        'slow-due',
+        'fast-due',
+        'pending-now',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

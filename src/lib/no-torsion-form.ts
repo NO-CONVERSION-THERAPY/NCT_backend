@@ -1,6 +1,6 @@
 import type { JsonObject } from '../types';
 import { hmacSha256, sha256 } from './crypto';
-import { writeRecord } from './data';
+import { getOrCreateFormProtectionSecret, writeRecord } from './data';
 import {
   validateCountyForCity,
   validateProvinceAndCity,
@@ -332,26 +332,8 @@ function base64UrlDecode(value: string): string {
   return decoder.decode(bytes);
 }
 
-function resolveFormProtectionSecret(env: Env): string {
-  const explicitSecret = readTrimmedEnvValue(
-    env.NO_TORSION_FORM_PROTECTION_SECRET,
-    env.FORM_PROTECTION_SECRET,
-  );
-
-  if (explicitSecret) {
-    return explicitSecret;
-  }
-
-  const formIdOrUrl = readTrimmedEnvValue(
-    env.NO_TORSION_GOOGLE_FORM_URL,
-    env.NO_TORSION_FORM_ID,
-    env.FORM_ID,
-  );
-  const siteUrl = readTrimmedEnvValue(
-    env.SERVICE_PUBLIC_URL,
-    env.NO_TORSION_SITE_URL,
-  );
-  return `${formIdOrUrl}:${siteUrl || 'no-torsion-backend'}`;
+function resolveFormProtectionSecret(env: Env): Promise<string> {
+  return getOrCreateFormProtectionSecret(env.DB);
 }
 
 function normalizeGoogleFormSubmitUrl(url: string): string {
@@ -401,7 +383,7 @@ function buildGoogleFormSubmitUrl(options: {
 function getFormGoogleSubmitUrl(env: Env): string {
   return buildGoogleFormSubmitUrl({
     defaultFormId: '1FAIpQLScggjQgYutXQrjQDrutyxL0eLaFMktTMRKsFWPffQGavUFspA',
-    formId: readTrimmedEnvValue(env.NO_TORSION_FORM_ID, env.FORM_ID),
+    formId: readTrimmedEnvValue(env.NO_TORSION_FORM_ID),
     fullUrl: readTrimmedEnvValue(env.NO_TORSION_GOOGLE_FORM_URL),
   });
 }
@@ -410,65 +392,49 @@ function getCorrectionGoogleSubmitUrl(env: Env): string {
   return buildGoogleFormSubmitUrl({
     defaultFormId: '1FAIpQLSfiXdpt8CgOGZQhvsJTc1koQbvXFo6eWfnigQ329r1',
     defaultFormIdSuffix: '-3DniNA',
-    formId: readTrimmedEnvValue(
-      env.NO_TORSION_CORRECTION_FORM_ID,
-      env.CORRECTION_FORM_ID,
-      env.CORRECTION_GOOGLE_FORM_ID,
-    ),
-    fullUrl: readTrimmedEnvValue(
-      env.NO_TORSION_CORRECTION_GOOGLE_FORM_URL,
-      env.CORRECTION_GOOGLE_FORM_URL,
-    ),
+    formId: readTrimmedEnvValue(env.NO_TORSION_CORRECTION_FORM_ID),
+    fullUrl: readTrimmedEnvValue(env.NO_TORSION_CORRECTION_GOOGLE_FORM_URL),
   });
 }
 
 function getFormDryRun(env: Env): boolean {
   return parseBooleanEnv(
-    readTrimmedEnvValue(env.NO_TORSION_FORM_DRY_RUN, env.FORM_DRY_RUN),
+    readTrimmedEnvValue(env.NO_TORSION_FORM_DRY_RUN),
     true,
   );
 }
 
 function getFormSubmitTarget(env: Env): SubmitTarget {
   return resolveSubmitTarget(
-    readTrimmedEnvValue(env.NO_TORSION_FORM_SUBMIT_TARGET, env.FORM_SUBMIT_TARGET),
+    readTrimmedEnvValue(env.NO_TORSION_FORM_SUBMIT_TARGET),
     'both',
   );
 }
 
 function getCorrectionSubmitTarget(env: Env): SubmitTarget {
   return resolveSubmitTarget(
-    readTrimmedEnvValue(
-      env.NO_TORSION_CORRECTION_SUBMIT_TARGET,
-      env.CORRECTION_SUBMIT_TARGET,
-    ),
-    'd1',
+    readTrimmedEnvValue(env.NO_TORSION_CORRECTION_SUBMIT_TARGET),
+    'both',
   );
 }
 
 function getFormProtectionMinFillMs(env: Env): number {
   return normalizePositiveInteger(
-    readTrimmedEnvValue(
-      env.NO_TORSION_FORM_PROTECTION_MIN_FILL_MS,
-      env.FORM_PROTECTION_MIN_FILL_MS,
-    ),
+    readTrimmedEnvValue(env.NO_TORSION_FORM_PROTECTION_MIN_FILL_MS),
     3000,
   );
 }
 
 function getFormProtectionMaxAgeMs(env: Env): number {
   return normalizePositiveInteger(
-    readTrimmedEnvValue(
-      env.NO_TORSION_FORM_PROTECTION_MAX_AGE_MS,
-      env.FORM_PROTECTION_MAX_AGE_MS,
-    ),
+    readTrimmedEnvValue(env.NO_TORSION_FORM_PROTECTION_MAX_AGE_MS),
     24 * 60 * 60 * 1000,
   );
 }
 
 async function secureEquals(left: string, right: string): Promise<boolean> {
   const leftDigest = await sha256(`left:${left}`);
-  const rightDigest = await sha256(`right:${right}`);
+  const rightDigest = await sha256(`left:${right}`);
   return leftDigest === rightDigest;
 }
 
@@ -663,7 +629,10 @@ export async function issueFormProtectionToken(env: Env): Promise<string> {
     .map((chunk) => chunk.toString(16).padStart(2, '0'))
     .join('');
   const payload = buildTokenPayload(issuedAt, nonce);
-  const signature = await hmacSha256(payload, resolveFormProtectionSecret(env));
+  const signature = await hmacSha256(
+    payload,
+    await resolveFormProtectionSecret(env),
+  );
 
   return `${payload}.${signature}`;
 }
@@ -712,7 +681,7 @@ export async function validateFormProtection(
   const payload = buildTokenPayload(issuedAt, nonce);
   const expectedSignature = await hmacSha256(
     payload,
-    resolveFormProtectionSecret(env),
+    await resolveFormProtectionSecret(env),
   );
 
   if (!(await secureEquals(signature, expectedSignature))) {
@@ -768,7 +737,7 @@ async function issueFormConfirmationToken(
   const tokenPayload = buildTokenPayload(normalizedIssuedAt, payloadHash);
   const signature = await hmacSha256(
     tokenPayload,
-    resolveFormProtectionSecret(env),
+    await resolveFormProtectionSecret(env),
   );
 
   return `${tokenPayload}.${signature}`;
@@ -819,7 +788,7 @@ async function validateFormConfirmation(
   const tokenPayload = buildTokenPayload(issuedAt, expectedPayloadHash);
   const expectedSignature = await hmacSha256(
     tokenPayload,
-    resolveFormProtectionSecret(env),
+    await resolveFormProtectionSecret(env),
   );
 
   if (!(await secureEquals(signature, expectedSignature))) {
@@ -1839,12 +1808,17 @@ export async function submitNoTorsionCorrection(
         };
       } else {
         const recordKey = `no-torsion:correction:${crypto.randomUUID()}`;
+        const payload = buildCorrectionStoragePayload(
+          validationResult.values,
+          requestContext,
+          clientIpHash,
+        );
         await writeRecord(db, 'nct_form', {
-          payload: buildCorrectionStoragePayload(
-            validationResult.values,
-            requestContext,
-            clientIpHash,
-          ),
+          payload,
+          recordKey,
+        });
+        await writeRecord(db, 'nct_databack', {
+          payload,
           recordKey,
         });
         resultsByTarget[target] = {

@@ -1,14 +1,13 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { renderToString } from 'hono/jsx/dom/server';
-import { z } from 'zod';
+import type { MotherPushRecord } from './types';
 import {
   exportDatabackFile,
   getDatabackVersion,
+  getMotherServicePublicKey,
   getTableCounts,
   importMotherPushRecords,
-  listRecords,
-  writeRecord
 } from './lib/data';
 import {
   confirmNoTorsionFormSubmission,
@@ -19,61 +18,17 @@ import {
 } from './lib/no-torsion-form';
 import { translateDetailItems } from './lib/no-torsion-translation';
 import { toJsonObject } from './lib/json';
-import { maybeReportOnFirstExecution, reportToMother } from './lib/report';
-import { assertToken } from './lib/security';
+import {
+  flushPendingMotherFormRecords,
+  maybeReportOnFirstExecution,
+  reportToMother,
+} from './lib/report';
+import { assertCachedMotherServiceAuth } from './lib/security';
 import {
   NoTorsionStandaloneFormPage,
   NoTorsionStandalonePreviewPage,
   NoTorsionStandaloneResultPage,
 } from './site/no-torsion-form-page';
-import type { DynamicTableName, MotherPushPayload, RecordWriteRequest } from './types';
-
-const tableSchema = z.enum(['nct_form', 'nct_databack']);
-
-const writeSchema = z.object({
-  table: tableSchema,
-  recordKey: z.string().optional(),
-  payload: z
-    .record(z.string(), z.unknown())
-    .transform((value) => toJsonObject(value)),
-  mirrorToDataback: z.boolean().optional()
-}) satisfies z.ZodType<RecordWriteRequest>;
-
-const secureTransferPayloadSchema = z.object({
-  keyVersion: z.number().int().min(1),
-  publicData: z
-    .record(z.string(), z.unknown())
-    .transform((value) => toJsonObject(value)),
-  encryptedData: z.object({
-    algorithm: z.literal('AES-GCM'),
-    iv: z.string().min(1),
-    ciphertext: z.string().min(1)
-  }),
-  encryptFields: z.array(z.string()),
-  syncedAt: z.string().nullable()
-});
-
-const motherPushSchema = z.object({
-  service: z.string().min(1),
-  mode: z.enum(['full', 'delta']),
-  previousVersion: z.number().int().min(0),
-  currentVersion: z.number().int().min(0),
-  totalRecords: z.number().int().min(0),
-  records: z.array(
-    z.object({
-      recordKey: z.string().min(1),
-      version: z.number().int().min(0),
-      fingerprint: z.string().min(1),
-      payload: secureTransferPayloadSchema
-    })
-  ),
-  generatedAt: z.string().min(1)
-}) satisfies z.ZodType<MotherPushPayload>;
-
-const RECOGNIZED_MOTHER_SERVICES = new Set([
-  'NCT API SQL',
-  'nct-api-sql'
-]);
 
 function parseNoTorsionBody(input: unknown): {
   body: Record<string, unknown>;
@@ -124,8 +79,66 @@ function parseNoTorsionBody(input: unknown): {
   };
 }
 
+function parseMotherPushBody(input: unknown): MotherPushRecord[] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Mother push payload must be a JSON object.');
+  }
+
+  const candidate = input as {
+    records?: unknown;
+  };
+  if (!Array.isArray(candidate.records)) {
+    throw new Error('Mother push payload records are missing.');
+  }
+
+  return candidate.records.map((record) => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      throw new Error('Mother push record is invalid.');
+    }
+
+    const entry = record as {
+      fingerprint?: unknown;
+      payload?: unknown;
+      recordKey?: unknown;
+      version?: unknown;
+    };
+    const payload = entry.payload;
+
+    if (
+      typeof entry.recordKey !== 'string'
+      || typeof entry.version !== 'number'
+      || typeof entry.fingerprint !== 'string'
+      || !payload
+      || typeof payload !== 'object'
+      || Array.isArray(payload)
+      || typeof (payload as { keyVersion?: unknown }).keyVersion !== 'number'
+      || !(payload as { publicData?: unknown }).publicData
+      || typeof (payload as { publicData?: unknown }).publicData !== 'object'
+      || Array.isArray((payload as { publicData?: unknown }).publicData)
+      || !(payload as { encryptedData?: unknown }).encryptedData
+      || typeof (payload as { encryptedData?: unknown }).encryptedData !== 'object'
+      || Array.isArray((payload as { encryptedData?: unknown }).encryptedData)
+      || !Array.isArray((payload as { encryptFields?: unknown }).encryptFields)
+      || (payload as { encryptFields: unknown[] }).encryptFields.some((field) => typeof field !== 'string')
+      || (
+        (payload as { syncedAt?: unknown }).syncedAt !== null
+        && typeof (payload as { syncedAt?: unknown }).syncedAt !== 'string'
+      )
+    ) {
+      throw new Error('Mother push record fields are invalid.');
+    }
+
+    return {
+      fingerprint: entry.fingerprint,
+      payload: payload as MotherPushRecord['payload'],
+      recordKey: entry.recordKey,
+      version: Math.max(0, Math.trunc(entry.version)),
+    };
+  });
+}
+
 function buildNoTorsionErrorResponse(
-  context: Parameters<typeof assertToken>[0],
+  context: Context,
   error: unknown
 ): Response {
   const message = error instanceof Error ? error.message : 'Unknown backend error.';
@@ -186,26 +199,6 @@ function buildNoTorsionErrorResponse(
 
 export const app = new Hono<{ Bindings: Env }>();
 
-async function readMultipartJsonPayload(request: Request): Promise<unknown> {
-  const contentType = request.headers.get('content-type') ?? '';
-  if (!contentType.includes('multipart/form-data')) {
-    return request.json();
-  }
-
-  const formData = await request.formData();
-  const fileEntry = formData.get('file') ?? formData.get('payload');
-
-  if (
-    !fileEntry
-    || typeof fileEntry !== 'object'
-    || typeof (fileEntry as Blob).text !== 'function'
-  ) {
-    throw new Error('Missing JSON file attachment.');
-  }
-
-  return JSON.parse(await (fileEntry as Blob).text());
-}
-
 async function parseFormBody(
   request: Request
 ): Promise<Record<string, unknown>> {
@@ -259,6 +252,19 @@ function readClientIp(request: Request): string | undefined {
   return firstHop || undefined;
 }
 
+const NO_TORSION_STANDALONE_FORM_PATH = '/form';
+const NO_TORSION_STANDALONE_FORM_CONFIRM_PATH = '/form/confirm';
+const NO_TORSION_LEGACY_FORM_PATH = '/no-torsion/form';
+const NO_TORSION_LEGACY_FORM_CONFIRM_PATH = '/no-torsion/form/confirm';
+
+function buildStandaloneFormHref(language: 'en' | 'zh-CN' | 'zh-TW'): string {
+  return `${NO_TORSION_STANDALONE_FORM_PATH}?lang=${encodeURIComponent(language)}`;
+}
+
+function buildStandaloneFormConfirmHref(language: 'en' | 'zh-CN' | 'zh-TW'): string {
+  return `${NO_TORSION_STANDALONE_FORM_CONFIRM_PATH}?lang=${encodeURIComponent(language)}`;
+}
+
 function buildStandaloneFailureResult(message: string): NoTorsionConfirmResult {
   return {
     encodedPayload: '',
@@ -280,7 +286,17 @@ app.use(
   '/api/*',
   cors({
     origin: '*',
-    allowHeaders: ['content-type', 'authorization', 'x-api-token'],
+    allowHeaders: [
+      'content-type',
+      'authorization',
+      'x-api-token',
+      'x-nct-auth-alg',
+      'x-nct-key-id',
+      'x-nct-timestamp',
+      'x-nct-nonce',
+      'x-nct-body-sha256',
+      'x-nct-signature',
+    ],
     allowMethods: ['GET', 'POST', 'OPTIONS']
   })
 );
@@ -299,23 +315,22 @@ app.get('/', async (context) => {
     databackVersion: currentDatabackVersion,
     routes: {
       health: '/api/health',
-      write: '/api/write',
-      pushFromMother: '/api/push/secure-records',
-      noTorsionFormPage: '/no-torsion/form',
+      noTorsionFormPage: NO_TORSION_STANDALONE_FORM_PATH,
+      noTorsionFormPageLegacy: NO_TORSION_LEGACY_FORM_PATH,
       noTorsionFrontendRuntime: '/api/no-torsion/frontend-runtime',
       noTorsionFormPrepare: '/api/no-torsion/form/prepare',
       noTorsionFormConfirm: '/api/no-torsion/form/confirm',
       noTorsionCorrectionSubmit: '/api/no-torsion/correction/submit',
       noTorsionTranslateText: '/api/no-torsion/translate-text',
       exportDataback: '/api/export/nct_databack',
-      readForm: '/api/data/nct_form',
-      readDataback: '/api/data/nct_databack',
-      reportNow: '/api/report-now'
+      motherReport: context.env.MOTHER_REPORT_URL ?? null,
     }
   });
 });
 
-app.get('/no-torsion/form', async (context) => {
+async function renderNoTorsionStandaloneFormPage(
+  context: Context<{ Bindings: Env }>
+) {
   const language = resolveNoTorsionLanguage(context.req.query('lang'));
   const token = await issueFormProtectionToken(context.env);
 
@@ -327,9 +342,15 @@ app.get('/no-torsion/form', async (context) => {
       })
     )
   );
-});
+}
 
-app.post('/no-torsion/form', async (context) => {
+// Keep the legacy `/no-torsion/form` entrypoints alive while frontend traffic finishes migrating to `/form`.
+app.get(NO_TORSION_STANDALONE_FORM_PATH, renderNoTorsionStandaloneFormPage);
+app.get(NO_TORSION_LEGACY_FORM_PATH, renderNoTorsionStandaloneFormPage);
+
+async function handleNoTorsionStandaloneFormSubmission(
+  context: Context<{ Bindings: Env }>
+) {
   const body = await parseFormBody(context.req.raw);
   const language = resolveNoTorsionLanguage(
     typeof body.lang === 'string' ? body.lang : context.req.query('lang')
@@ -353,12 +374,12 @@ app.post('/no-torsion/form', async (context) => {
     return context.html(
       renderToString(
         NoTorsionStandalonePreviewPage({
-          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          backHref: buildStandaloneFormHref(language),
           confirmationPayload:
             result.mode === 'confirm' ? result.confirmationPayload : undefined,
           confirmationToken:
             result.mode === 'confirm' ? result.confirmationToken : undefined,
-          formAction: `/no-torsion/form/confirm?lang=${encodeURIComponent(language)}`,
+          formAction: buildStandaloneFormConfirmHref(language),
           lang: language,
           mode: result.mode,
           values: result.values
@@ -376,7 +397,7 @@ app.post('/no-torsion/form', async (context) => {
     return context.html(
       renderToString(
         NoTorsionStandaloneResultPage({
-          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          backHref: buildStandaloneFormHref(language),
           lang: language,
           result: buildStandaloneFailureResult(
             [
@@ -393,9 +414,14 @@ app.post('/no-torsion/form', async (context) => {
       { status: response.status as 400 | 500 }
     );
   }
-});
+}
 
-app.post('/no-torsion/form/confirm', async (context) => {
+app.post(NO_TORSION_STANDALONE_FORM_PATH, handleNoTorsionStandaloneFormSubmission);
+app.post(NO_TORSION_LEGACY_FORM_PATH, handleNoTorsionStandaloneFormSubmission);
+
+async function handleNoTorsionStandaloneFormConfirmation(
+  context: Context<{ Bindings: Env }>
+) {
   const body = await parseFormBody(context.req.raw);
   const language = resolveNoTorsionLanguage(
     typeof body.lang === 'string' ? body.lang : context.req.query('lang')
@@ -418,11 +444,18 @@ app.post('/no-torsion/form/confirm', async (context) => {
     );
     const statusCode: 200 | 500 =
       result.successfulTargets.length > 0 ? 200 : 500;
+    if (result.successfulTargets.includes('d1')) {
+      context.executionCtx?.waitUntil(
+        flushPendingMotherFormRecords(context.env, {
+          fallbackOrigin: new URL(context.req.url).origin,
+        })
+      );
+    }
 
     return context.html(
       renderToString(
         NoTorsionStandaloneResultPage({
-          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          backHref: buildStandaloneFormHref(language),
           lang: language,
           result,
           statusCode
@@ -441,7 +474,7 @@ app.post('/no-torsion/form/confirm', async (context) => {
     return context.html(
       renderToString(
         NoTorsionStandaloneResultPage({
-          backHref: `/no-torsion/form?lang=${encodeURIComponent(language)}`,
+          backHref: buildStandaloneFormHref(language),
           lang: language,
           result: buildStandaloneFailureResult(
             [
@@ -458,7 +491,10 @@ app.post('/no-torsion/form/confirm', async (context) => {
       { status: response.status as 400 | 500 }
     );
   }
-});
+}
+
+app.post(NO_TORSION_STANDALONE_FORM_CONFIRM_PATH, handleNoTorsionStandaloneFormConfirmation);
+app.post(NO_TORSION_LEGACY_FORM_CONFIRM_PATH, handleNoTorsionStandaloneFormConfirmation);
 
 app.get('/api/health', async (context) => {
   const [counts, currentDatabackVersion] = await Promise.all([
@@ -476,15 +512,6 @@ app.get('/api/health', async (context) => {
 });
 
 app.get('/api/no-torsion/frontend-runtime', async (context) => {
-  const authError = assertToken(
-    context,
-    context.env.NO_TORSION_SERVICE_TOKEN,
-    'No-Torsion service'
-  );
-  if (authError) {
-    return authError;
-  }
-
   const scope = (context.req.query('scope') ?? 'form').trim();
   if (scope !== 'form' && scope !== 'correction') {
     return context.json(
@@ -502,15 +529,6 @@ app.get('/api/no-torsion/frontend-runtime', async (context) => {
 });
 
 app.post('/api/no-torsion/form/prepare', async (context) => {
-  const authError = assertToken(
-    context,
-    context.env.NO_TORSION_SERVICE_TOKEN,
-    'No-Torsion service'
-  );
-  if (authError) {
-    return authError;
-  }
-
   try {
     const input = parseNoTorsionBody(await context.req.json());
     const result = await prepareNoTorsionFormSubmission(
@@ -526,15 +544,6 @@ app.post('/api/no-torsion/form/prepare', async (context) => {
 });
 
 app.post('/api/no-torsion/form/confirm', async (context) => {
-  const authError = assertToken(
-    context,
-    context.env.NO_TORSION_SERVICE_TOKEN,
-    'No-Torsion service'
-  );
-  if (authError) {
-    return authError;
-  }
-
   try {
     const body = await context.req.json() as {
       confirmationPayload?: unknown;
@@ -554,6 +563,13 @@ app.post('/api/no-torsion/form/confirm', async (context) => {
             : ''
       }
     );
+    if (result.successfulTargets.includes('d1')) {
+      context.executionCtx?.waitUntil(
+        flushPendingMotherFormRecords(context.env, {
+          fallbackOrigin: new URL(context.req.url).origin,
+        })
+      );
+    }
 
     return context.json(
       result,
@@ -565,15 +581,6 @@ app.post('/api/no-torsion/form/confirm', async (context) => {
 });
 
 app.post('/api/no-torsion/correction/submit', async (context) => {
-  const authError = assertToken(
-    context,
-    context.env.NO_TORSION_SERVICE_TOKEN,
-    'No-Torsion service'
-  );
-  if (authError) {
-    return authError;
-  }
-
   try {
     const input = parseNoTorsionBody(await context.req.json());
     const result = await submitNoTorsionCorrection(
@@ -581,6 +588,13 @@ app.post('/api/no-torsion/correction/submit', async (context) => {
       context.env,
       input
     );
+    if (result.successfulTargets.includes('d1')) {
+      context.executionCtx?.waitUntil(
+        flushPendingMotherFormRecords(context.env, {
+          fallbackOrigin: new URL(context.req.url).origin,
+        })
+      );
+    }
 
     return context.json(
       result,
@@ -592,15 +606,6 @@ app.post('/api/no-torsion/correction/submit', async (context) => {
 });
 
 app.post('/api/no-torsion/translate-text', async (context) => {
-  const authError = assertToken(
-    context,
-    context.env.NO_TORSION_SERVICE_TOKEN,
-    'No-Torsion service'
-  );
-  if (authError) {
-    return authError;
-  }
-
   try {
     const body = await context.req.json() as {
       items?: unknown;
@@ -649,116 +654,42 @@ app.post('/api/no-torsion/translate-text', async (context) => {
   }
 });
 
-app.post('/api/write', async (context) => {
-  const authError = assertToken(context, context.env.WRITE_TOKEN, 'Write');
-  if (authError) {
-    return authError;
-  }
-
-  const body = await context.req.json();
-  const parsed = writeSchema.safeParse(body);
-  if (!parsed.success) {
-    return context.json(
-      {
-        error: 'Invalid write payload.',
-        details: parsed.error.flatten()
-      },
-      400
-    );
-  }
-
-  const storedRecord = await writeRecord(
-    context.env.DB,
-    parsed.data.table,
-    {
-      recordKey: parsed.data.recordKey,
-      payload: parsed.data.payload
-    }
-  );
-
-  let mirroredRecord = null;
-  if (
-    parsed.data.table === 'nct_form' &&
-    parsed.data.mirrorToDataback !== false
-  ) {
-    mirroredRecord = await writeRecord(
-      context.env.DB,
-      'nct_databack',
-      {
-        recordKey: storedRecord.recordKey,
-        payload: storedRecord.payload
-      }
-    );
-  }
-
-  return context.json({
-    message: 'Record written successfully.',
-    table: parsed.data.table,
-    record: storedRecord,
-    mirroredRecord
-  });
-});
-
 app.post('/api/push/secure-records', async (context) => {
-  const authError = assertToken(context, context.env.MOTHER_PUSH_TOKEN, 'Mother push');
+  const authError = await assertCachedMotherServiceAuth(
+    context,
+    context.env,
+    await getMotherServicePublicKey(context.env.DB)
+  );
   if (authError) {
     return authError;
   }
 
-  let body: unknown;
   try {
-    body = await readMultipartJsonPayload(context.req.raw);
+    const records = parseMotherPushBody(await context.req.json());
+    const result = await importMotherPushRecords(context.env.DB, records);
+
+    return context.json({
+      importedCount: result.receivedCount,
+      skippedCount: result.skippedCount,
+      synced: true,
+      updatedCount: result.updatedCount,
+    });
   } catch (error) {
     return context.json(
       {
-        error: 'Invalid mother push payload.',
-        details: error instanceof Error ? error.message : 'Unreadable request body.'
+        error: error instanceof Error ? error.message : 'Invalid mother push payload.',
       },
       400
     );
   }
-
-  const parsed = motherPushSchema.safeParse(body);
-  if (!parsed.success) {
-    return context.json(
-      {
-        error: 'Invalid mother push payload.',
-        details: parsed.error.flatten()
-      },
-      400
-    );
-  }
-
-  if (!RECOGNIZED_MOTHER_SERVICES.has(parsed.data.service.trim())) {
-    return context.json(
-      {
-        error: 'Only nct-api-sql push payloads are accepted.'
-      },
-      403
-    );
-  }
-
-  const result = await importMotherPushRecords(
-    context.env.DB,
-    parsed.data.records
-  );
-
-  return context.json(
-    {
-      accepted: true,
-      source: parsed.data.service,
-      mode: parsed.data.mode,
-      previousVersion: parsed.data.previousVersion,
-      currentVersion: parsed.data.currentVersion,
-      generatedAt: parsed.data.generatedAt,
-      ...result
-    },
-    202
-  );
 });
 
 app.get('/api/export/nct_databack', async (context) => {
-  const authError = assertToken(context, context.env.MOTHER_PUSH_TOKEN, 'Mother export');
+  const authError = await assertCachedMotherServiceAuth(
+    context,
+    context.env,
+    await getMotherServicePublicKey(context.env.DB)
+  );
   if (authError) {
     return authError;
   }
@@ -782,71 +713,6 @@ app.get('/api/export/nct_databack', async (context) => {
   });
 });
 
-app.get('/api/data/:table', async (context) => {
-  const authError = assertToken(context, context.env.READ_TOKEN, 'Read');
-  if (authError) {
-    return authError;
-  }
-
-  const parsed = tableSchema.safeParse(context.req.param('table'));
-  if (!parsed.success) {
-    return context.json(
-      {
-        error: 'Unsupported table name.'
-      },
-      400
-    );
-  }
-
-  const tableName = parsed.data as DynamicTableName;
-  const limit = Number(context.req.query('limit') ?? '50');
-  const recordKey = context.req.query('recordKey') ?? undefined;
-  const records = await listRecords(context.env.DB, tableName, {
-    limit,
-    recordKey
-  });
-
-  return context.json({
-    table: tableName,
-    count: records.length,
-    databackVersion:
-      tableName === 'nct_databack'
-        ? await getDatabackVersion(context.env.DB)
-        : undefined,
-    records
-  });
-});
-
-app.get('/api/data/nct_databack/version', async (context) => {
-  const authError = assertToken(context, context.env.READ_TOKEN, 'Read');
-  if (authError) {
-    return authError;
-  }
-
-  return context.json({
-    version: await getDatabackVersion(context.env.DB)
-  });
-});
-
-app.post('/api/report-now', async (context) => {
-  const authError = assertToken(context, context.env.WRITE_TOKEN, 'Write');
-  if (authError) {
-    return authError;
-  }
-
-  const result = await reportToMother(context.env, {
-    fallbackOrigin: new URL(context.req.url).origin
-  });
-
-  const status: 200 | 429 | 502 = result.skipped || result.delivered
-    ? 200
-    : result.responseCode === 429
-      ? 429
-      : 502;
-
-  return context.json(result, status);
-});
-
 app.notFound((context) => {
   return context.json(
     {
@@ -858,14 +724,22 @@ app.notFound((context) => {
 
 export default {
   fetch(request: Request, env: Env, executionCtx: ExecutionContext) {
+    // Report once on the first live request so fresh deployments can register before the next cron tick.
     maybeReportOnFirstExecution(env, executionCtx, new URL(request.url).origin);
     return app.fetch(request, env, executionCtx);
   },
   scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     executionCtx: ExecutionContext
   ) {
-    executionCtx.waitUntil(reportToMother(env));
+    executionCtx.waitUntil(
+      (async () => {
+        if (controller.cron === '*/30 * * * *') {
+          await reportToMother(env);
+        }
+        await flushPendingMotherFormRecords(env);
+      })()
+    );
   }
 };

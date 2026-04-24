@@ -8,12 +8,12 @@
 
 - `nct_form` 与 `nct_databack` 两张 D1 表
 - 表字段按传入 JSON 顶层字段自动扩列
-- 数据写入与数据请求 API
-- 作为 `No-Torsion` 的后端服务，承接表单、机构修正、翻译与前端运行时 token
-- 接收母库 `nct-api-sql` 主动推送的第二张表数据并写入 `nct_databack`
+- 作为 `No-Torsion` 的后端服务，承接表单、机构修正、翻译与前端运行时保护 token
+- 直接输出 `Hono + JSX` 的独立表单、确认页与结果页
+- 定时从母库 `nct-api-sql` 拉取公开的 secure records 并写入 `nct_databack`
 - 按母库请求把 `nct_databack` 导出成附件文件并回传给母库
 - 服务首次执行时向母库报告一次
-- 之后每 30 分钟向母库报告一次当前部署域名与 `nct_databack` 版本号
+- 之后每 30 分钟执行一次“拉取母库 + 上报自身状态”
 
 ## 表结构
 
@@ -86,60 +86,41 @@
 
 健康检查，包含两张表记录数与当前 `nct_databack` 版本号。
 
-### `POST /api/write`
+`nct-api-sql-sub` 不再公开通用的 `/api/write`、`/api/data/*`、`/api/report-now`。
+正常数据流改为：
 
-写入数据。
-
-请求体：
-
-```json
-{
-  "table": "nct_form",
-  "recordKey": "optional-key",
-  "payload": {
-    "name": "Sub School",
-    "province": "河南",
-    "age": 18
-  },
-  "mirrorToDataback": true
-}
-```
-
-说明：
-
-- `table` 只能是 `nct_form` 或 `nct_databack`
-- 当 `table = nct_form` 时，默认会同步镜像写入 `nct_databack`
-- `recordKey` 可不传，服务会自动生成
-
-### `GET /api/data/nct_form`
-
-查询 `nct_form` 数据。
-
-支持参数：
-
-- `limit`
-- `recordKey`
-
-### `GET /api/data/nct_databack`
-
-查询 `nct_databack` 数据。
-
-支持参数：
-
-- `limit`
-- `recordKey`
-
-### `GET /api/data/nct_databack/version`
-
-返回当前 `nct_databack` 最大版本号。
-
-### `POST /api/report-now`
-
-手动触发一次向母库的上报。
+- `No-Torsion` 前端通过 `/api/no-torsion/*` 走业务接口
+- 子库自己定时从母库拉取 `GET /api/public/secure-records`
+- 母库只在灾备时访问 `GET /api/export/nct_databack`
 
 ### `GET /api/no-torsion/frontend-runtime`
 
 供 `No-Torsion` 前端获取最新表单保护 token。
+
+### `GET /form`
+
+直接输出独立 Hono JSX 表单页。
+适合把前端“填写入口”直接跳到这个页面。
+
+兼容旧路径：
+
+- `GET /no-torsion/form`
+
+### `POST /form`
+
+处理独立表单页提交，返回 Hono JSX 预览页或确认页。
+
+兼容旧路径：
+
+- `POST /no-torsion/form`
+
+### `POST /form/confirm`
+
+处理独立表单页的最终确认提交流程，并返回 Hono JSX 结果页。
+
+兼容旧路径：
+
+- `POST /no-torsion/form/confirm`
 
 ### `POST /api/no-torsion/form/prepare`
 
@@ -166,11 +147,6 @@
 
 供 `No-Torsion` 详情页调用明细翻译能力。
 
-### `POST /api/push/secure-records`
-
-接收母库 `nct-api-sql` 主动推送的第二张表数据，并按母库的 `recordKey`、`version`、`fingerprint` 幂等写入 `nct_databack`。
-该接口同时支持 JSON 请求体和 `multipart/form-data` 的 JSON 附件文件；主库默认走文件上传。
-
 ### `GET /api/export/nct_databack`
 
 母库使用的导出接口。
@@ -179,7 +155,8 @@
 说明：
 
 - 如果记录本身已经是母库推送来的 secure payload，会原样回传
-- 如果记录是子库本地写入的普通 JSON，会在导出时使用子库配置的 `ENCRYPTION_KEY` 和 `DEFAULT_ENCRYPT_FIELDS` 转成 secure payload，再回传给母库
+- 如果记录是子库本地写入的普通 JSON，会原样回传；母库收到后再按自己的 `ENCRYPTION_KEY` 重新生成 t2
+- 母库灾备回拉这个接口时，必须带可被子库已缓存母库公钥验签通过的 `x-nct-*` ECDSA 请求签名
 
 ## 母库上报
 
@@ -188,6 +165,7 @@
 ```json
 {
   "service": "NCT API SQL Sub",
+  "serviceWatermark": "nct-api-sql-sub:v1",
   "serviceUrl": "https://sub.example.com",
   "databackVersion": 12,
   "reportCount": 7,
@@ -199,46 +177,72 @@
 这个计数持久化在 `nct_form` 中的一条系统保留记录里，不会额外新增第三张业务表。
 系统记录使用保留 `record_key` 前缀 `__system__:`，并且不会出现在正常的数据列表和业务计数中。
 
-需要的环境变量：
+环境变量模板：
 
-- `ENCRYPTION_KEY`
-- `DEFAULT_ENCRYPT_FIELDS`
-- `ENCRYPTION_KEY_VERSION`
+```bash
+cp .env.example .dev.vars
+```
+
+[`./.env.example`](./.env.example) 已按修改必要性排序列出当前项目的全部环境变量。
+本地 Wrangler 读取 `.dev.vars`；线上部署时，把同名键写入 Cloudflare Variables / Secrets。
+
+#### 必填环境变量
+
+完整 mother/sub 同步与灾备链路至少需要先确认这些值：
+
+- 平台绑定必填但不写进 `.env`：`DB`，在 [`wrangler.toml`](./wrangler.toml) 中绑定 D1
 - `SERVICE_PUBLIC_URL`
 - `MOTHER_REPORT_URL`
-- `MOTHER_REPORT_TOKEN` 可选
-- `MOTHER_PUSH_TOKEN` 可选
-- `MOTHER_REPORT_TIMEOUT_MS` 可选
 
-如果同时作为 `No-Torsion` 后端，还建议配置：
+生产部署还需要确认这些前提：
 
-- `NO_TORSION_SERVICE_TOKEN`
-- `NO_TORSION_FORM_PROTECTION_SECRET` 可选
-- `NO_TORSION_FORM_DRY_RUN` 可选
-- `NO_TORSION_FORM_SUBMIT_TARGET` 可选
-- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_FORM_ID` 可选
-- `NO_TORSION_CORRECTION_SUBMIT_TARGET` 可选
-- `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_FORM_ID` 可选
-- `NO_TORSION_SITE_URL` 可选
-- `GOOGLE_CLOUD_TRANSLATION_API_KEY` 可选
-- `TRANSLATION_PROVIDER_TIMEOUT_MS` 可选
+- 子库现在不再要求额外配置母库公钥、旧 token 或本地导出加密密钥
+- 子库会在首次成功上报母库后，把母库返回的签名公钥缓存到 `nct_form` 系统记录里
+
+如果同时作为 `No-Torsion` 后端并希望真实落库，而不是只停留在预览页，建议明确设置：
+
+- `NO_TORSION_FORM_DRY_RUN=false`
+
+默认行为：
+
+- `NO_TORSION_FORM_DRY_RUN=true`
+- `NO_TORSION_FORM_SUBMIT_TARGET=both`
+- `NO_TORSION_CORRECTION_SUBMIT_TARGET=both`
+
+按功能必填：
+
+- `GOOGLE_CLOUD_TRANSLATION_API_KEY` 仅在你要启用 `/api/no-torsion/translate-text` 时需要
+
+其他常用但可选变量：
+
+- `APP_NAME`
+- `MOTHER_REPORT_TIMEOUT_MS`
+- `SERVICE_AUTH_MAX_SKEW_MS`
+- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_FORM_ID`
+- `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_FORM_ID`
+- `NO_TORSION_SITE_URL`
+- `NO_TORSION_FORM_PROTECTION_MIN_FILL_MS`
+- `NO_TORSION_FORM_PROTECTION_MAX_AGE_MS`
 
 其中：
 
-- `ENCRYPTION_KEY` 需要与母库保持一致，这样母库才能解密子库回传的 secure payload
-- `MOTHER_REPORT_TOKEN` 需要与主库 `SUB_REPORT_TOKEN` 保持一致
-- `MOTHER_PUSH_TOKEN` 需要与主库 `SUB_PUSH_TOKEN` 保持一致，并同时用于保护 `GET /api/export/nct_databack`
+- `APP_NAME` 不填时默认使用 `NCT API SQL Sub`
+- 子库上报时会带上 `serviceWatermark: "nct-api-sql-sub:v1"`；母库识别为子库后，会在上报响应中返回自己的签名公钥，子库会保存到 `__system__:mother_service_public_key`
+- 缓存的母库签名公钥只用于两件事：验签母库返回的 `secure-records` payload envelope，以及验签母库灾备回拉 `GET /api/export/nct_databack` 的请求头
+- 子库本地普通 JSON 回传给母库时不再额外做字段加密，也不再需要 `DEFAULT_ENCRYPT_FIELDS`、`ENCRYPTION_KEY`、`ENCRYPTION_KEY_VERSION`
+- `No-Torsion` 现在只支持 `NO_TORSION_*` 变量名；旧 `FORM_*` / `CORRECTION_*` 兼容别名已删除
+- 表单保护 secret 不再通过环境变量输入；服务首次发放表单 token 时会自动生成并保存到 D1 的 `__system__:form_protection_secret`
 
 当 `No-Torsion` 接入本服务时：
 
 - `No-Torsion` 侧将 `NCT_BACKEND_SERVICE_URL` 指向这个服务
-- `No-Torsion` 侧的 `NCT_BACKEND_SERVICE_TOKEN` 需要与这里的 `NO_TORSION_SERVICE_TOKEN` 保持一致
+- `/api/no-torsion/*` 现已作为浏览器侧业务接口公开，若需要更严格控制，建议在前面放同域代理或可信 BFF，而不是把 secret 下发到前端
 
 注意：
 
 - Cloudflare Workers 没有真正的“部署后立即启动钩子”
 - 因此这里的“第一次启动报告”实现为“首次实际执行时报告一次”
-- 之后通过 Cron `*/30 * * * *` 每 30 分钟报告一次
+- 之后通过 Cron `*/30 * * * *` 每 30 分钟执行一次“从母库拉取公开 secure records + 向母库报告自身状态”
 
 本地开发默认在 `.dev.vars` 中把 `MOTHER_REPORT_URL` 设为空，因此手动或定时上报会返回：
 
@@ -255,6 +259,7 @@
 ```bash
 cd nct-api-sql-sub
 npm install
+cp .env.example .dev.vars
 npm run dev
 ```
 
@@ -264,6 +269,27 @@ npm run dev
 
 - Worker: `http://127.0.0.1:8791`
 - 健康检查: `http://127.0.0.1:8791/api/health`
+
+## 测试
+
+```bash
+npm run typecheck
+npm run test
+```
+
+如果你只想验证独立 Hono JSX 页面：
+
+```bash
+npm run test:jsx
+```
+
+当前 JSX 验证会直接覆盖：
+
+- `NoTorsionStandaloneFormPage`
+- `NoTorsionStandalonePreviewPage`
+- `NoTorsionStandaloneResultPage`
+
+这些测试会在 Node 环境里直接调用 `renderToString(...)`，确认 `hono/jsx` 产物可以正常服务端渲染，而不是只测路由字符串拼接。
 
 ## D1
 
@@ -289,13 +315,15 @@ npm run db:migrate:remote
 
 已经本地验证通过：
 
+- `npm run typecheck`
 - `npm run test`
+- `npm run test:jsx`
 - `npm run check`
 - `npm run predev`
-- `POST /api/write`
-- `GET /api/data/nct_form`
-- `GET /api/data/nct_databack`
-- `GET /api/data/nct_databack/version`
-- `POST /api/push/secure-records`
-- `POST /api/report-now`
+- `GET /api/no-torsion/frontend-runtime`
+- `POST /api/no-torsion/form/prepare`
+- `POST /api/no-torsion/form/confirm`
+- `POST /api/no-torsion/correction/submit`
+- `POST /api/no-torsion/translate-text`
+- `GET /api/export/nct_databack`
 - `GET /cdn-cgi/handler/scheduled`
