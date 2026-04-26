@@ -1,0 +1,20 @@
+name = "nct-backend-test"
+main = "src/index.ts"
+compatibility_date = "2026-04-20"
+workers_dev = true
+
+[observability.logs]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nct-backend-test"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "./migrations"
+
+[vars]
+APP_NAME = "NCT API SQL Sub Test"
+SERVICE_PUBLIC_URL = ""
+MOTHER_REPORT_URL = ""
+MOTHER_REPORT_TIMEOUT_MS = "10000"
+DATABACK_EXPORT_MIN_INTERVAL_MS = "60000"
