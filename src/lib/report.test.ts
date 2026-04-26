@@ -52,7 +52,11 @@ vi.mock('./crypto', () => ({
   decryptJsonWithPrivateKey: vi.fn(async () => ({ token: 'bootstrapped-token' })),
 }));
 
-import { reportToMother, syncFromMother } from './report';
+import {
+  flushPendingMotherFormRecords,
+  reportToMother,
+  syncFromMother,
+} from './report';
 
 describe('reportToMother', () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -236,6 +240,111 @@ describe('reportToMother', () => {
       responseCode: null,
       reason: 'socket hang up',
     });
+  });
+});
+
+describe('flushPendingMotherFormRecords', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    getMotherAuthTokenMock.mockResolvedValue('auth-token');
+    getMotherServicePublicKeyMock.mockResolvedValue(null);
+    getOrCreateLocalServiceEncryptionKeyPairMock.mockResolvedValue({
+      privateKey: '-----BEGIN PRIVATE KEY-----\nsub\n-----END PRIVATE KEY-----',
+      publicKey: '-----BEGIN PUBLIC KEY-----\nsub\n-----END PUBLIC KEY-----',
+    });
+    markMotherFormSyncFailureMock.mockResolvedValue(undefined);
+    markMotherFormSyncSuccessMock.mockResolvedValue(undefined);
+    clearMotherAuthTokenMock.mockResolvedValue(undefined);
+    writeMotherServicePublicKeyMock.mockResolvedValue(undefined);
+    writeMotherServiceEncryptionPublicKeyMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('posts full form payloads so future questionnaire fields reach the mother service', async () => {
+    listPendingMotherFormSyncRecordsMock.mockResolvedValue([
+      {
+        databackFingerprint: 'fp-1',
+        databackVersion: 12,
+        payload: {
+          name: '测试机构',
+          schoolName: '测试机构',
+          submittedFields: {
+            future_question: '未来新增答案',
+            future_multi: ['第一项', '第二项'],
+          },
+        },
+        recordKey: 'form:future-field',
+        updatedAt: '2026-04-24T12:00:00.000Z',
+      },
+    ]);
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          results: [
+            {
+              databackFingerprint: 'fp-1',
+              motherVersion: 25,
+              recordKey: 'form:future-field',
+              updated: true,
+            },
+          ],
+        }),
+        { status: 202 },
+      ),
+    );
+
+    const result = await flushPendingMotherFormRecords({
+      DB: {} as D1Database,
+      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      SERVICE_PUBLIC_URL: 'https://sub.example.com',
+    } as Env);
+
+    expect(result).toMatchObject({
+      deliveredCount: 1,
+      pendingCount: 0,
+      responseCode: 202,
+      skipped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://mother.example.com/api/sub/form-records');
+    expect(init.headers).toEqual({
+      authorization: 'Bearer auth-token',
+      'content-type': 'application/json',
+    });
+
+    const body = JSON.parse(String(init.body)) as {
+      records: Array<{
+        payload: {
+          submittedFields?: Record<string, unknown>;
+        };
+      }>;
+      serviceUrl: string;
+    };
+
+    expect(body.serviceUrl).toBe('https://sub.example.com');
+    expect(body.records[0]?.payload.submittedFields).toEqual({
+      future_question: '未来新增答案',
+      future_multi: ['第一项', '第二项'],
+    });
+    expect(markMotherFormSyncSuccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        databackFingerprint: 'fp-1',
+        motherVersion: 25,
+        recordKey: 'form:future-field',
+        updated: true,
+      },
+    );
+    expect(markMotherFormSyncFailureMock).not.toHaveBeenCalled();
   });
 });
 

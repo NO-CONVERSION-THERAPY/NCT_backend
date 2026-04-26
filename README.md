@@ -80,7 +80,8 @@
 
 ### `GET /`
 
-返回服务状态、当前 `nct_databack` 版本号和主要路由信息。
+直接输出独立 Hono JSX 表单页。
+适合本地启动后直接打开 Worker 根地址填写问卷。
 
 ### `GET /api/health`
 
@@ -231,6 +232,7 @@ cp .env.example .dev.vars
 - 缓存的母库签名公钥只用于两件事：验签母库返回的 `secure-records` payload envelope，以及验签母库灾备回拉 `GET /api/export/nct_databack` 的请求头
 - 子库本地普通 JSON 回传给母库时不再额外做字段加密，也不再需要 `DEFAULT_ENCRYPT_FIELDS`、`ENCRYPTION_KEY`、`ENCRYPTION_KEY_VERSION`
 - `No-Torsion` 现在只支持 `NO_TORSION_*` 变量名；旧 `FORM_*` / `CORRECTION_*` 兼容别名已删除
+- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` 可以填写完整 Google Form 链接，支持 `/forms/d/<id>`、`/forms/d/<id>/viewform`、`/forms/d/<id>/prefill`、`/forms/d/e/<id>/viewform` 和 `/formResponse` 形态；`NO_TORSION_FORM_ID` / `NO_TORSION_CORRECTION_FORM_ID` 可以填写 raw form ID
 - 表单保护 secret 不再通过环境变量输入；服务首次发放表单 token 时会自动生成并保存到 D1 的 `__system__:form_protection_secret`
 
 当 `No-Torsion` 接入本服务时：
@@ -269,6 +271,93 @@ npm run dev
 
 - Worker: `http://127.0.0.1:8791`
 - 健康检查: `http://127.0.0.1:8791/api/health`
+
+## Cloudflare Workers 部署
+
+本文档示例使用 `https://sub.example.com` 作为子库域名，并假设母库已经部署在 `https://api.example.com`。
+
+### 1. 登录并创建 D1
+
+```bash
+npx wrangler login
+npx wrangler whoami
+npm install
+npx wrangler d1 create nct-api-sql-sub
+```
+
+把命令返回的 `database_id` 写回 [`wrangler.toml`](./wrangler.toml)：
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "nct-api-sql-sub"
+database_id = "替换为线上 D1 database_id"
+migrations_dir = "./migrations"
+```
+
+### 2. 绑定自定义域名
+
+建议使用 Workers Custom Domains 绑定 `sub.example.com`。用 `wrangler.toml` 管理时加入：
+
+```toml
+[[routes]]
+pattern = "sub.example.com"
+custom_domain = true
+```
+
+也可以在 Cloudflare Dashboard 的 Worker 设置页中添加 Custom Domain。正式环境如果不想暴露 `*.workers.dev`，把 `workers_dev = false`。
+
+### 3. 设置生产变量
+
+修改 [`wrangler.toml`](./wrangler.toml) 的 `[vars]`：
+
+```toml
+[vars]
+APP_NAME = "NCT API SQL Sub"
+SERVICE_PUBLIC_URL = "https://sub.example.com"
+MOTHER_REPORT_URL = "https://api.example.com/api/sub/report"
+MOTHER_REPORT_TIMEOUT_MS = "10000"
+NO_TORSION_FORM_DRY_RUN = "false"
+NO_TORSION_FORM_SUBMIT_TARGET = "d1"
+NO_TORSION_CORRECTION_SUBMIT_TARGET = "d1"
+```
+
+提交目标可以按实际需要调整：
+
+- `d1`：只写入子库 D1，再由子库回传母库。
+- `google`：只投递 Google Form。
+- `both`：同时写 D1 和 Google Form。
+
+如果启用翻译，设置：
+
+```bash
+npx wrangler secret put GOOGLE_CLOUD_TRANSLATION_API_KEY
+```
+
+如果要覆盖默认 Google Form，也可以把下面这些值放入 `[vars]` 或 Secrets：
+
+```text
+NO_TORSION_GOOGLE_FORM_URL="https://docs.google.com/forms/d/e/1FAIpQLScolfqJ9dbvJxhjoKYVlmKGwHmy7RiQThutDXpKj7W7jGytfg/viewform?usp=publish-editor"
+NO_TORSION_FORM_ID
+NO_TORSION_CORRECTION_GOOGLE_FORM_URL
+NO_TORSION_CORRECTION_FORM_ID
+```
+
+### 4. 远端迁移并部署
+
+```bash
+npm run db:migrate:remote
+npm run deploy
+```
+
+部署后访问一次：
+
+```text
+https://sub.example.com/api/health
+https://sub.example.com/form
+```
+
+Workers 没有部署后启动钩子，所以首次 bootstrap / report 会在第一次实际请求或后续 Cron 中发生。回到母库 `https://api.example.com/Console`，确认子库上报已经被记录。
 
 ## 测试
 

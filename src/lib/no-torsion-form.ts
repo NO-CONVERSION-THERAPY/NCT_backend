@@ -1,4 +1,4 @@
-import type { JsonObject } from '../types';
+import type { JsonObject, JsonValue } from '../types';
 import { hmacSha256, sha256 } from './crypto';
 import { getOrCreateFormProtectionSecret, writeRecord } from './data';
 import {
@@ -84,6 +84,18 @@ const allowedLegalAidOptions = new Set([
   '担心报复',
   CUSTOM_LEGAL_AID_OPTION,
 ]);
+const omittedSubmittedFieldNames = new Set([
+  'confirmation_payload',
+  'confirmation_token',
+  'confirmationPayload',
+  'confirmationToken',
+  'form_token',
+  'g-recaptcha-response',
+  'website',
+]);
+const maxSubmittedFieldTextLength = 8000;
+const maxSubmittedFieldArrayLength = 100;
+const maxSubmittedFieldObjectDepth = 4;
 
 type SubmitTarget = 'google' | 'd1' | 'both';
 type ActualSubmitTarget = 'google' | 'd1';
@@ -121,7 +133,9 @@ export type NoTorsionFormValues = {
   googleFormAge: number | null;
   headmasterName: string;
   identity: string;
+  latitude: number | null;
   legalAidStatus: string;
+  longitude: number | null;
   other: string;
   parentMotivations: string[];
   preInstitutionCity: string;
@@ -131,10 +145,13 @@ export type NoTorsionFormValues = {
   province: string;
   provinceCode: string;
   scandal: string;
+  schoolAwarenessBeforeEntry: string;
   schoolAddress: string;
+  schoolCoordinates: string;
   schoolName: string;
   sex: string;
   standaloneEnhancements: boolean;
+  submittedFields: JsonObject;
   violenceCategories: string[];
 };
 
@@ -150,6 +167,7 @@ export type NoTorsionCorrectionValues = {
   provinceCode: string;
   schoolAddress: string;
   schoolName: string;
+  submittedFields: JsonObject;
 };
 
 export type NoTorsionFormPrepareResult =
@@ -220,6 +238,82 @@ function getUniqueValues(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function normalizeSubmittedFieldValue(
+  value: unknown,
+  depth = 0,
+): JsonValue | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text ? text.slice(0, maxSubmittedFieldTextLength) : undefined;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, maxSubmittedFieldArrayLength)
+      .map((item) => normalizeSubmittedFieldValue(item, depth + 1))
+      .filter((item): item is JsonValue => item !== undefined);
+
+    return items.length > 0 ? items : undefined;
+  }
+
+  if (
+    value
+    && typeof value === 'object'
+    && depth < maxSubmittedFieldObjectDepth
+  ) {
+    const normalizedObject = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .reduce<JsonObject>((accumulator, [key, itemValue]) => {
+        const trimmedKey = key.trim();
+        if (!trimmedKey) {
+          return accumulator;
+        }
+
+        const normalizedValue = normalizeSubmittedFieldValue(itemValue, depth + 1);
+        if (normalizedValue !== undefined) {
+          accumulator[trimmedKey] = normalizedValue;
+        }
+
+        return accumulator;
+      }, {});
+
+    return Object.keys(normalizedObject).length > 0 ? normalizedObject : undefined;
+  }
+
+  const text = String(value).trim();
+  return text ? text.slice(0, maxSubmittedFieldTextLength) : undefined;
+}
+
+function buildSubmittedFields(body: Record<string, unknown>): JsonObject {
+  return Object.entries(body)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .reduce<JsonObject>((accumulator, [key, value]) => {
+      const trimmedKey = key.trim();
+      if (!trimmedKey || omittedSubmittedFieldNames.has(trimmedKey)) {
+        return accumulator;
+      }
+
+      const normalizedValue = normalizeSubmittedFieldValue(value);
+      if (normalizedValue !== undefined) {
+        accumulator[trimmedKey] = normalizedValue;
+      }
+
+      return accumulator;
+    }, {});
+}
+
 function parseIntegerString(value: unknown): number | null {
   const text = getTrimmedString(value);
 
@@ -228,6 +322,36 @@ function parseIntegerString(value: unknown): number | null {
   }
 
   return Number.parseInt(text, 10);
+}
+
+function parseCoordinatePair(
+  value: string,
+): { latitude: number; longitude: number } | null {
+  const text = getTrimmedString(value);
+  if (!text) {
+    return null;
+  }
+
+  const match =
+    /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*[,，]\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/.exec(
+      text,
+    );
+  if (!match) {
+    return null;
+  }
+
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return null;
+  }
+
+  return { latitude, longitude };
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
@@ -336,13 +460,31 @@ function resolveFormProtectionSecret(env: Env): Promise<string> {
   return getOrCreateFormProtectionSecret(env.DB);
 }
 
-function normalizeGoogleFormSubmitUrl(url: string): string {
-  return readTrimmedEnvValue(url)
-    .replace(/\/viewform(?:\?.*)?$/i, '/formResponse')
-    .replace(/\/formResponse(?:\?.*)?$/i, '/formResponse');
+export function normalizeGoogleFormSubmitUrl(url: string): string {
+  const trimmedUrl = readTrimmedEnvValue(url);
+  if (!trimmedUrl) {
+    return '';
+  }
+
+  return trimmedUrl
+    .replace(
+      /\/forms\/d\/e\/([^/?#]+)(?:\/(?:viewform|formResponse|edit|prefill))?(?:[?#].*)?$/i,
+      '/forms/d/e/$1/formResponse',
+    )
+    .replace(
+      /\/forms\/d\/([^/?#]+)(?:\/(?:viewform|formResponse|edit|prefill))?(?:[?#].*)?$/i,
+      '/forms/d/$1/formResponse',
+    )
+    .replace(/\/viewform(?:[?#].*)?$/i, '/formResponse')
+    .replace(/\/prefill(?:[?#].*)?$/i, '/formResponse')
+    .replace(/\/formResponse(?:[?#].*)?$/i, '/formResponse');
 }
 
-function buildGoogleFormSubmitUrl(options: {
+function isPublishedGoogleFormId(value: string): boolean {
+  return /^1FAIpQL/i.test(value);
+}
+
+export function buildGoogleFormSubmitUrl(options: {
   defaultFormId?: string;
   defaultFormIdSuffix?: string;
   formId?: string;
@@ -377,12 +519,13 @@ function buildGoogleFormSubmitUrl(options: {
     resolvedFormId = `${resolvedFormId}${options.defaultFormIdSuffix}`;
   }
 
-  return `https://docs.google.com/forms/d/e/${resolvedFormId}/formResponse`;
+  const formPath = isPublishedGoogleFormId(resolvedFormId) ? 'd/e' : 'd';
+  return `https://docs.google.com/forms/${formPath}/${resolvedFormId}/formResponse`;
 }
 
 function getFormGoogleSubmitUrl(env: Env): string {
   return buildGoogleFormSubmitUrl({
-    defaultFormId: '1FAIpQLScggjQgYutXQrjQDrutyxL0eLaFMktTMRKsFWPffQGavUFspA',
+    defaultFormId: '1FAIpQLScolfqJ9dbvJxhjoKYVlmKGwHmy7RiQThutDXpKj7W7jGytfg',
     formId: readTrimmedEnvValue(env.NO_TORSION_FORM_ID),
     fullUrl: readTrimmedEnvValue(env.NO_TORSION_GOOGLE_FORM_URL),
   });
@@ -612,7 +755,9 @@ function getFormRules(now = new Date()) {
     parentMotivationOther: { label: 'Other parent motivation', maxLength: 120 },
     parentMotivations: { label: 'Parent motivations' },
     provinceCode: { label: 'Province', required: true },
+    schoolAwarenessBeforeEntry: { label: 'Pre-entry school awareness', maxLength: 1000 },
     schoolAddress: { label: 'School address', maxLength: 50 },
+    schoolCoordinates: { label: 'Coordinates', maxLength: 64 },
     schoolName: { label: 'School name', maxLength: 20, required: true },
     scandal: { label: 'Scandal', maxLength: 3000 },
     sex: { label: 'Sex', required: true },
@@ -834,7 +979,7 @@ function buildGoogleFormSexFields(sexValue: string): GoogleFormField[] {
     return [{ entryId: 'entry.1422578992', value: '女' }];
   }
 
-  if (sexValue === 'MtF' || sexValue === 'FtM') {
+  if (sexValue === 'MtF' || sexValue === 'FtM' || sexValue === 'X' || sexValue === 'Queer') {
     return [{ entryId: 'entry.1422578992', value: sexValue }];
   }
 
@@ -847,26 +992,81 @@ function buildGoogleFormSexFields(sexValue: string): GoogleFormField[] {
   ];
 }
 
+function buildGoogleFormAgentRelationshipFields(
+  values: NoTorsionFormValues,
+): GoogleFormField[] {
+  if (values.identity === SELF_IDENTITY) {
+    return [
+      { entryId: 'entry.981546984', value: OTHER_SEX_OPTION },
+      { entryId: 'entry.981546984.other_option_response', value: '本人' },
+    ];
+  }
+
+  if (values.agentRelationship === '伴侣') {
+    return [{ entryId: 'entry.981546984', value: '伴侶' }];
+  }
+
+  if (values.agentRelationship === '亲属') {
+    return [{ entryId: 'entry.981546984', value: '親屬' }];
+  }
+
+  if (
+    values.agentRelationship === '朋友'
+    || values.agentRelationship === '伴侶'
+    || values.agentRelationship === '親屬'
+    || values.agentRelationship === '救助工作者'
+  ) {
+    return [{ entryId: 'entry.981546984', value: values.agentRelationship }];
+  }
+
+  return [
+    { entryId: 'entry.981546984', value: OTHER_SEX_OPTION },
+    {
+      entryId: 'entry.981546984.other_option_response',
+      value: values.agentRelationship || '未填写',
+    },
+  ];
+}
+
+function buildGoogleFormListValue(values: string[]): string {
+  return values.filter(Boolean).join('；');
+}
+
 function normalizeGoogleFormProvinceValue(province: string): string {
   return province === '臺灣' ? '臺灣（ROC）' : province;
 }
 
 export function buildGoogleFormFields(values: NoTorsionFormValues): GoogleFormField[] {
-  const cityValue = [values.city, values.county].filter(Boolean).join(' ');
   const fields: GoogleFormField[] = [
-    { entryId: 'entry.842223433', value: values.googleFormAge ?? '' },
+    { entryId: 'entry.500021634', value: values.identity },
+    ...buildGoogleFormAgentRelationshipFields(values),
+    { entryId: 'entry.842223433', value: values.birthDate },
+    ...buildGoogleFormSexFields(values.sex),
+    { entryId: 'entry.145491361', value: normalizeGoogleFormProvinceValue(values.preInstitutionProvince) },
+    { entryId: 'entry.1367743406', value: values.preInstitutionCity },
+    {
+      entryId: 'entry.681431781',
+      value: buildGoogleFormListValue(values.parentMotivations),
+    },
+    { entryId: 'entry.38011337', value: values.schoolAwarenessBeforeEntry },
+    { entryId: 'entry.578287646', value: values.experience },
+    { entryId: 'entry.1184547907', value: values.legalAidStatus },
+    { entryId: 'entry.5034928', value: values.schoolName },
     {
       entryId: 'entry.1766160152',
       value: normalizeGoogleFormProvinceValue(values.province),
     },
-    { entryId: 'entry.402227428', value: cityValue },
-    { entryId: 'entry.5034928', value: values.schoolName },
-    { entryId: 'entry.500021634', value: values.identity },
-    ...buildGoogleFormSexFields(values.sex),
+    { entryId: 'entry.402227428', value: values.city },
+    { entryId: 'entry.1624809773', value: values.county },
     { entryId: 'entry.1390240202', value: values.schoolAddress },
-    { entryId: 'entry.578287646', value: values.experience },
-    { entryId: 'entry.1533497153', value: values.headmasterName },
+    { entryId: 'entry.534528800', value: values.schoolCoordinates },
     { entryId: 'entry.883193772', value: values.contactInformation },
+    { entryId: 'entry.1533497153', value: values.headmasterName },
+    { entryId: 'entry.1085954426', value: values.abuserInfo },
+    {
+      entryId: 'entry.1895858332',
+      value: buildGoogleFormListValue(values.violenceCategories),
+    },
     { entryId: 'entry.1400127416', value: values.scandal },
     { entryId: 'entry.2022959936', value: values.other },
   ];
@@ -993,7 +1193,11 @@ function buildFormStoragePayload(
     headmasterName: values.headmasterName,
     inputType: values.identity,
     lang: getTrimmedString(requestContext.lang) || 'zh-CN',
+    lat: values.latitude,
+    latitude: values.latitude,
     legalAidStatus: values.legalAidStatus,
+    lng: values.longitude,
+    longitude: values.longitude,
     name: values.schoolName,
     other: values.other,
     parentMotivations: values.parentMotivations,
@@ -1005,12 +1209,15 @@ function buildFormStoragePayload(
     provinceCode: values.provinceCode,
     recordKind: 'no_torsion_form',
     scandal: values.scandal,
+    schoolAwarenessBeforeEntry: values.schoolAwarenessBeforeEntry,
     schoolAddress: values.schoolAddress,
+    schoolCoordinates: values.schoolCoordinates,
     schoolName: values.schoolName,
     sex: values.sex,
     source: 'No-Torsion',
     sourcePath: getTrimmedString(requestContext.sourcePath) || '/submit',
     standaloneEnhancements: values.standaloneEnhancements,
+    submittedFields: values.submittedFields,
     submittedAt: new Date().toISOString(),
     userAgent: getTrimmedString(requestContext.userAgent).slice(0, 512),
     violenceCategories: values.violenceCategories,
@@ -1042,6 +1249,7 @@ function buildCorrectionStoragePayload(
     source: 'No-Torsion',
     sourcePath:
       getTrimmedString(requestContext.sourcePath) || '/map/correction/submit',
+    submittedFields: values.submittedFields,
     submittedAt: new Date().toISOString(),
     userAgent: getTrimmedString(requestContext.userAgent).slice(0, 512),
   };
@@ -1081,6 +1289,7 @@ export function validateNoTorsionFormSubmission(
   const standaloneEnhancements = shouldUseEnhancedQuestionnaire(body);
   const errors: string[] = [];
   const formRules = getFormRules();
+  const submittedFields = buildSubmittedFields(body);
   const identity = getTrimmedString(body.identity);
   const birthYearValue = getTrimmedString(body.birth_year);
   const birthMonthValue = '1';
@@ -1114,12 +1323,24 @@ export function validateNoTorsionFormSubmission(
     body.school_address,
     { maxLength: formRules.schoolAddress.maxLength },
   );
+  const schoolCoordinates = validateTextField(
+    errors,
+    formRules.schoolCoordinates.label,
+    body.school_coordinates,
+    { maxLength: formRules.schoolCoordinates.maxLength },
+  );
   const dateStart = getTrimmedString(body.date_start);
   const dateEnd = getTrimmedString(body.date_end);
   const experienceInput = validateTextField(
     errors,
     formRules.experience.label,
     body.experience,
+  );
+  const schoolAwarenessBeforeEntryInput = validateTextField(
+    errors,
+    formRules.schoolAwarenessBeforeEntry.label,
+    body.school_awareness_before_entry,
+    { maxLength: formRules.schoolAwarenessBeforeEntry.maxLength },
   );
   const headmasterName = validateTextField(
     errors,
@@ -1146,9 +1367,23 @@ export function validateNoTorsionFormSubmission(
     formRules.other.label,
     body.other,
   );
+  const agentRelationshipChoice = validateChoiceValue(
+    errors,
+    formRules.agentRelationship.label,
+    body.agent_relationship,
+    allowedAgentRelationshipOptions,
+  );
+  const agentRelationshipOther = validateTextField(
+    errors,
+    formRules.agentRelationship.label,
+    body.agent_relationship_other,
+    { maxLength: formRules.agentRelationship.maxLength },
+  );
 
   let birthDate = '';
   let googleFormAge: number | null = null;
+  let latitude: number | null = null;
+  let longitude: number | null = null;
   let validatedLocation: ReturnType<typeof validateProvinceAndCity> = null;
   let validatedCounty: ReturnType<typeof validateCountyForCity> = null;
   let validatedPreInstitutionProvince: ReturnType<typeof validateProvinceCode> = null;
@@ -1198,6 +1433,21 @@ export function validateNoTorsionFormSubmission(
     errors.push('Identity is invalid.');
   }
 
+  if (identity === AGENT_IDENTITY && agentRelationshipChoice) {
+    if (
+      agentRelationshipChoice === CUSTOM_AGENT_RELATIONSHIP_OPTION
+      && !agentRelationshipOther
+    ) {
+      errors.push('Relationship is required.');
+    } else {
+      agentRelationship = buildCustomChoiceValue(
+        agentRelationshipChoice,
+        CUSTOM_AGENT_RELATIONSHIP_OPTION,
+        agentRelationshipOther,
+      );
+    }
+  }
+
   if (!sex) {
     errors.push('Sex is required.');
   } else if (!allowedSexes.has(sex)) {
@@ -1238,6 +1488,16 @@ export function validateNoTorsionFormSubmission(
     }
   }
 
+  if (schoolCoordinates) {
+    const coordinatePair = parseCoordinatePair(schoolCoordinates);
+    if (!coordinatePair) {
+      errors.push('Coordinates are invalid.');
+    } else {
+      latitude = coordinatePair.latitude;
+      longitude = coordinatePair.longitude;
+    }
+  }
+
   if (!dateStart) {
     errors.push('Start date is required.');
   } else if (!validateDateString(dateStart)) {
@@ -1253,18 +1513,6 @@ export function validateNoTorsionFormSubmission(
   }
 
   if (standaloneEnhancements) {
-    const agentRelationshipChoice = validateChoiceValue(
-      errors,
-      formRules.agentRelationship.label,
-      body.agent_relationship,
-      allowedAgentRelationshipOptions,
-    );
-    const agentRelationshipOther = validateTextField(
-      errors,
-      formRules.agentRelationship.label,
-      body.agent_relationship_other,
-      { maxLength: formRules.agentRelationship.maxLength },
-    );
     const preInstitutionProvinceCode = getTrimmedString(
       body.pre_institution_province_code,
     );
@@ -1326,21 +1574,6 @@ export function validateNoTorsionFormSubmission(
       body.abuser_info,
       { maxLength: formRules.abuserInfo.maxLength },
     );
-
-    if (identity === AGENT_IDENTITY && agentRelationshipChoice) {
-      if (
-        agentRelationshipChoice === CUSTOM_AGENT_RELATIONSHIP_OPTION
-        && !agentRelationshipOther
-      ) {
-        errors.push('Relationship is required.');
-      } else {
-        agentRelationship = buildCustomChoiceValue(
-          agentRelationshipChoice,
-          CUSTOM_AGENT_RELATIONSHIP_OPTION,
-          agentRelationshipOther,
-        );
-      }
-    }
 
     if (preInstitutionCityCode && !preInstitutionProvinceCode) {
       errors.push('Pre-institution province is required.');
@@ -1424,8 +1657,14 @@ export function validateNoTorsionFormSubmission(
   }
 
   let experience = experienceInput;
+  const schoolAwarenessBeforeEntry =
+    identity === SELF_IDENTITY ? schoolAwarenessBeforeEntryInput : '';
   let scandal = scandalInput;
   let other = otherInput;
+
+  if (identity === AGENT_IDENTITY && agentRelationship) {
+    other = appendTextBlock(other, `填表人为受害人的${agentRelationship}。`);
+  }
 
   if (standaloneEnhancements) {
     if (exitMethod) {
@@ -1437,10 +1676,6 @@ export function validateNoTorsionFormSubmission(
         scandal,
         `机构丑闻及暴力行为包括：${violenceCategories.join('；')}`,
       );
-    }
-
-    if (identity === AGENT_IDENTITY && agentRelationship) {
-      other = appendTextBlock(other, `填表人为受害人的${agentRelationship}。`);
     }
 
     const preInstitutionProvince = validatedPreInstitutionLocation
@@ -1527,7 +1762,9 @@ export function validateNoTorsionFormSubmission(
       googleFormAge,
       headmasterName,
       identity,
+      latitude,
       legalAidStatus,
+      longitude,
       other,
       parentMotivations,
       preInstitutionCity: validatedPreInstitutionLocation?.cityName ?? '',
@@ -1543,10 +1780,13 @@ export function validateNoTorsionFormSubmission(
       province: validatedLocation?.legacyProvinceName ?? '',
       provinceCode: validatedLocation?.provinceCode ?? '',
       scandal,
+      schoolAwarenessBeforeEntry,
       schoolAddress,
+      schoolCoordinates,
       schoolName,
       sex: buildNormalizedSexValue(sex, sexOtherType, sexOther),
       standaloneEnhancements,
+      submittedFields,
       violenceCategories,
     },
   };
@@ -1556,6 +1796,7 @@ export function validateNoTorsionCorrectionSubmission(
   body: Record<string, unknown>,
 ): ValidateResult<NoTorsionCorrectionValues> {
   const errors: string[] = [];
+  const submittedFields = buildSubmittedFields(body);
   const schoolName = validateTextField(errors, 'School name', body.school_name, {
     maxLength: 80,
     required: true,
@@ -1642,6 +1883,7 @@ export function validateNoTorsionCorrectionSubmission(
         ?? '',
       schoolAddress,
       schoolName,
+      submittedFields,
     },
   };
 }

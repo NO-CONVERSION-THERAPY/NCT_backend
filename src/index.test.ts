@@ -73,7 +73,9 @@ const baseStandaloneValues = {
   googleFormAge: 24,
   headmasterName: '负责人',
   identity: '受害者本人',
+  latitude: 39.9042,
   legalAidStatus: '',
+  longitude: 116.4074,
   other: '',
   parentMotivations: [],
   preInstitutionCity: '',
@@ -83,10 +85,13 @@ const baseStandaloneValues = {
   province: '北京市',
   provinceCode: '110000',
   scandal: '',
+  schoolAwarenessBeforeEntry: '听说过类似机构的新闻',
   schoolAddress: '某机构地址',
+  schoolCoordinates: '39.904200, 116.407400',
   schoolName: '某机构',
   sex: '女性',
   standaloneEnhancements: true,
+  submittedFields: {},
   violenceCategories: [],
 };
 
@@ -137,11 +142,27 @@ describe('No-Torsion backend routes', () => {
 
     expect(response.status).toBe(200);
     expect(html).toContain('public-form-token');
-    expect(html).toContain('Standalone submission');
+    expect(html).toContain('Conversion Institution Survivor Questionnaire');
+    expect(html).toContain('data-standalone-language-link="zh-CN"');
     expect(html).toContain('/form?lang=en');
     expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({ DB: expect.anything() }),
     );
+  });
+
+  it('renders the standalone form page at the service root', async () => {
+    issueFormProtectionTokenMock.mockResolvedValue('root-public-form-token');
+
+    const response = await app.fetch(
+      new Request('https://sub.example.com/?lang=en'),
+      createEnv(),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('root-public-form-token');
+    expect(html).toContain('Conversion Institution Survivor Questionnaire');
+    expect(html).toContain('/form?lang=en');
   });
 
   it('keeps the legacy /no-torsion/form entrypoint working for backward compatibility', async () => {

@@ -398,4 +398,41 @@ describe('mother form sync retry policy', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps raw submitted future fields in pending mother sync records', async () => {
+    const { db } = createPendingSyncDb([
+      {
+        record_key: 'pending-future-field',
+        updated_at: '2026-04-24T00:29:59.000Z',
+        databack_payload_json: JSON.stringify({
+          name: '测试机构',
+          submittedFields: {
+            future_question: '未来新增答案',
+            future_multi: ['第一项', '第二项'],
+          },
+        }),
+        databack_version: 9,
+        databack_fingerprint: 'fingerprint-future',
+        mother_sync_status: 'pending',
+        mother_sync_attempts: 0,
+        mother_sync_last_attempt_at: null,
+      },
+    ]);
+
+    const result = await listPendingMotherFormSyncRecords(db, 10);
+
+    expect(result[0]).toMatchObject({
+      databackFingerprint: 'fingerprint-future',
+      databackVersion: 9,
+      payload: {
+        name: '测试机构',
+        submittedFields: {
+          future_question: '未来新增答案',
+          future_multi: ['第一项', '第二项'],
+        },
+      },
+      recordKey: 'pending-future-field',
+      updatedAt: '2026-04-24T00:29:59.000Z',
+    });
+  });
 });

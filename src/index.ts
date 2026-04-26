@@ -301,33 +301,6 @@ app.use(
   })
 );
 
-app.get('/', async (context) => {
-  const [counts, currentDatabackVersion] = await Promise.all([
-    getTableCounts(context.env.DB),
-    getDatabackVersion(context.env.DB)
-  ]);
-
-  return context.json({
-    app: context.env.APP_NAME ?? 'NCT API SQL Sub',
-    serviceUrl: context.env.SERVICE_PUBLIC_URL ?? new URL(context.req.url).origin,
-    status: 'ok',
-    tables: counts,
-    databackVersion: currentDatabackVersion,
-    routes: {
-      health: '/api/health',
-      noTorsionFormPage: NO_TORSION_STANDALONE_FORM_PATH,
-      noTorsionFormPageLegacy: NO_TORSION_LEGACY_FORM_PATH,
-      noTorsionFrontendRuntime: '/api/no-torsion/frontend-runtime',
-      noTorsionFormPrepare: '/api/no-torsion/form/prepare',
-      noTorsionFormConfirm: '/api/no-torsion/form/confirm',
-      noTorsionCorrectionSubmit: '/api/no-torsion/correction/submit',
-      noTorsionTranslateText: '/api/no-torsion/translate-text',
-      exportDataback: '/api/export/nct_databack',
-      motherReport: context.env.MOTHER_REPORT_URL ?? null,
-    }
-  });
-});
-
 async function renderNoTorsionStandaloneFormPage(
   context: Context<{ Bindings: Env }>
 ) {
@@ -344,7 +317,9 @@ async function renderNoTorsionStandaloneFormPage(
   );
 }
 
-// Keep the legacy `/no-torsion/form` entrypoints alive while frontend traffic finishes migrating to `/form`.
+// Keep `/form` and the legacy `/no-torsion/form` entrypoints alive while making
+// the service root useful when opened directly after startup.
+app.get('/', renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_STANDALONE_FORM_PATH, renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_LEGACY_FORM_PATH, renderNoTorsionStandaloneFormPage);
 

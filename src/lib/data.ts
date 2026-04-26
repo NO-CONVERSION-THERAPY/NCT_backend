@@ -16,7 +16,6 @@ import type {
 import {
   encryptJsonWithPublicKey,
   generateServiceEncryptionKeyPair,
-  sha256,
 } from './crypto';
 import {
   ensureDynamicColumns,
@@ -24,6 +23,10 @@ import {
   serializeDynamicColumnValue
 } from './dynamic-schema';
 import { parseJsonObject, stableStringify, toJsonObject } from './json';
+import {
+  computeRecordContentFingerprint,
+  deriveRecordContentVersion,
+} from './record-version';
 
 type DynamicRow = Record<string, unknown> & {
   id: string;
@@ -661,14 +664,14 @@ export async function writeRecord(
         .run();
     }
   } else {
-    const fingerprint = await sha256(payloadJson);
+    const fingerprint = await computeRecordContentFingerprint(payload);
     const currentVersion = await getDatabackVersion(db);
     const hasChanged = existingRow?.fingerprint !== fingerprint;
     const nextVersion = existingRow
       ? hasChanged
-        ? currentVersion + 1
+        ? deriveRecordContentVersion(currentVersion, fingerprint)
         : Number(existingRow.version ?? 0)
-      : currentVersion + 1;
+      : deriveRecordContentVersion(currentVersion, fingerprint);
 
     if (existingRow) {
       const updateColumns = [
@@ -916,7 +919,7 @@ export async function exportDatabackFile(
     const fingerprint =
       typeof row.fingerprint === 'string'
         ? row.fingerprint
-        : await sha256(stableStringify(payload));
+        : await computeRecordContentFingerprint(payload);
 
     records.push({
       payloadEncryptionState,
