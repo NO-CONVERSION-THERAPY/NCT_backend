@@ -28,13 +28,24 @@ function resolveServiceUrl(
   return fallbackOrigin?.trim() || null;
 }
 
-function resolveMotherFormSyncUrl(env: Env): string | null {
-  const motherReportUrl = env.MOTHER_REPORT_URL?.trim();
-  if (!motherReportUrl) {
+function resolveMotherUrl(
+  env: Env,
+  path: '/api/sub/report' | '/api/sub/form-records',
+): string | null {
+  const motherBaseUrl = env.MOTHER_REPORT_URL?.trim();
+  if (!motherBaseUrl) {
     return null;
   }
 
-  return new URL('/api/sub/form-records', motherReportUrl).toString();
+  return new URL(path, motherBaseUrl).toString();
+}
+
+function resolveMotherReportUrl(env: Env): string | null {
+  return resolveMotherUrl(env, '/api/sub/report');
+}
+
+function resolveMotherFormSyncUrl(env: Env): string | null {
+  return resolveMotherUrl(env, '/api/sub/form-records');
 }
 
 function getReportTimeoutMs(env: Env): number {
@@ -82,7 +93,7 @@ export async function reportToMother(
     payloadOverride?: MotherReportPayload;
   } = {}
 ): Promise<MotherReportResult> {
-  const motherReportUrl = env.MOTHER_REPORT_URL?.trim();
+  const motherReportUrl = resolveMotherReportUrl(env);
   if (!motherReportUrl) {
     return {
       delivered: false,

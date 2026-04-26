@@ -1,5 +1,5 @@
 import { renderToString } from 'hono/jsx/dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   NoTorsionConfirmResult,
   NoTorsionFormValues,
@@ -52,6 +52,34 @@ const baseValues: NoTorsionFormValues = {
 };
 
 describe('No-Torsion standalone JSX pages', () => {
+  it('builds birth year options at request render time', async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.setSystemTime(new Date('1970-01-01T00:00:00.000Z'));
+      vi.resetModules();
+
+      const { NoTorsionStandaloneFormPage: FreshFormPage } = await import(
+        './no-torsion-form-page'
+      );
+
+      vi.setSystemTime(new Date('2026-04-27T00:00:00.000Z'));
+      const html = renderToString(
+        FreshFormPage({
+          lang: 'en',
+          token: 'public-form-token',
+        }),
+      );
+
+      expect(html).toMatch(
+        /<select[^>]*id="birth-year"[^>]*>[\s\S]*?<option value="">Select a year<\/option><option value="2026">2026<\/option>/,
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.resetModules();
+    }
+  });
+
   it('renders the standalone form page with server-side Hono JSX output', () => {
     const html = renderToString(
       NoTorsionStandaloneFormPage({
@@ -99,12 +127,17 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('placeholder="Please fill in"');
     expect(html).toContain('Pick on map');
     expect(html).toContain('Use current location');
+    expect(html).toContain('Coordinates (latitude, longitude)');
+    expect(html).toContain('Latitude, longitude. Example: 39.904200, 116.407400');
+    expect(html).toContain(
+      'Coordinate format is &quot;latitude, longitude&quot;. Map selection or geolocation will fill it automatically, and you can edit it manually.',
+    );
     expect(html).toContain('&quot;Internet addiction&quot; / gaming');
     expect(html).toContain('Kidnapping while impersonating police');
     expect(html).toContain('Picked up by parents after the term ended');
     expect(html).toContain('name="school_coordinates"');
     expect(html).toMatch(/<input[^>]*hidden=""[^>]*id="school-coordinates"|<input[^>]*id="school-coordinates"[^>]*hidden=""/);
-    expect(html).toMatch(/<p[^>]*hidden=""[^>]*id="map-picker-status"|<p[^>]*id="map-picker-status"[^>]*hidden=""/);
+    expect(html).toContain('id="map-picker-status"');
     expect(html).toContain('Experience');
     expect(html).toContain('Select a province first');
     expect(html).toContain('"code":"110000"');
@@ -126,6 +159,9 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain(
       '全国统一心理援助：12356；青少年心理咨询和法律援助：12355；希望热线（全国性24小时心理危机干预）：400-161-9995',
     );
+    expect(html).toContain('坐标（纬度, 经度）');
+    expect(html).toContain('返回主页');
+    expect(html).toContain('target="_top"');
     expect(html).toContain('class="standalone-language-picker__option is-active"');
     expect(html).toContain('href="/form?lang=zh-TW"');
   });
@@ -154,6 +190,7 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('Survivor');
     expect(html).toContain('Female');
     expect(html).toContain('/form/confirm?lang=en');
+    expect(html).toContain('class="actions__form"');
   });
 
   it('renders representative relationship in review only for agent submissions', () => {

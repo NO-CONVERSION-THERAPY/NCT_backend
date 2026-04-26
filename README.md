@@ -123,6 +123,11 @@
 
 - `POST /no-torsion/form/confirm`
 
+### `GET /debug`
+
+仅当 `DEBUG_MOD=true` 时开放，提供独立表单页、预览页、确认页、成功页和错误页的调试入口。
+`POST /debug/submit-confirm` 会返回模拟成功页，不会把调试 payload 投递到真实表单或 D1。
+
 ### `POST /api/no-torsion/form/prepare`
 
 供 `No-Torsion` 主表单在真正提交前执行：
@@ -187,6 +192,7 @@ cp .env.example .dev.vars
 
 [`./.env.example`](./.env.example) 已按修改必要性排序列出当前项目的全部环境变量。
 本地 Wrangler 读取 `.dev.vars`；线上部署时，把同名键写入 Cloudflare Variables / Secrets。
+这些运行变量不会写入 `wrangler.toml`；部署脚本使用 `wrangler deploy --keep-vars`，避免 Git 中的配置覆盖 Dashboard 里的生产变量。
 
 #### 必填环境变量
 
@@ -220,8 +226,9 @@ cp .env.example .dev.vars
 - `APP_NAME`
 - `MOTHER_REPORT_TIMEOUT_MS`
 - `DATABACK_EXPORT_MIN_INTERVAL_MS`
-- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_FORM_ID`
-- `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_FORM_ID`
+- `DEBUG_MOD`
+- `NO_TORSION_FORM_ID`
+- `NO_TORSION_CORRECTION_FORM_ID`
 - `NO_TORSION_SITE_URL`
 - `NO_TORSION_FORM_PROTECTION_MIN_FILL_MS`
 - `NO_TORSION_FORM_PROTECTION_MAX_AGE_MS`
@@ -230,11 +237,13 @@ cp .env.example .dev.vars
 
 - `APP_NAME` 不填时默认使用 `NCT API SQL Sub`
 - 子库上报时会带上 `serviceWatermark: "nct-api-sql-sub:v1"`；母库用它确认协议类型，但真正认证靠 30 秒 HMAC
+- `MOTHER_REPORT_URL` 填母库基础 URL；子库会固定请求 `/api/sub/report`，并用 `/api/sub/form-records` 回传表单记录
 - `SERVICE_PUBLIC_URL` 必须稳定；它既是子库登记 URL，也是上报、表单回传、母库推送和灾备回拉的 HMAC seed
+- `DEBUG_MOD=true` 会开放 `/debug` 调试页面，只建议临时测试环境使用
 - `nct_databack` 传输本身不再加密；请求身份通过 HMAC Bearer token 验证
 - 子库本地普通 JSON 回传给母库时不再额外做字段加密，也不再需要 `DEFAULT_ENCRYPT_FIELDS`、`ENCRYPTION_KEY`、`ENCRYPTION_KEY_VERSION`
 - `No-Torsion` 现在只支持 `NO_TORSION_*` 变量名；旧 `FORM_*` / `CORRECTION_*` 兼容别名已删除
-- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` 可以填写完整 Google Form 链接，支持 `/forms/d/<id>`、`/forms/d/<id>/viewform`、`/forms/d/<id>/prefill`、`/forms/d/e/<id>/viewform` 和 `/formResponse` 形态；`NO_TORSION_FORM_ID` / `NO_TORSION_CORRECTION_FORM_ID` 可以填写 raw form ID
+- `NO_TORSION_FORM_ID` / `NO_TORSION_CORRECTION_FORM_ID` 只填写 Google Form ID，不再支持完整 Google Form 链接变量
 - 表单保护 secret 不再通过环境变量输入；服务首次发放表单 token 时会自动生成并保存到 D1 的 `__system__:form_protection_secret`
 
 当 `No-Torsion` 接入本服务时：
@@ -279,6 +288,7 @@ npm run dev
 仅推荐使用 Cloudflare Dashboard 的 Workers Builds 网页部署。本项目的 Worker 项目名使用目录名的 Workers 兼容形式：`nct-backend`。
 
 网页部署会读取 [`wrangler.toml`](./wrangler.toml)。部署命令里的 `npm run cf:ensure` 会自动创建 D1 数据库 `nct-backend`、把真实 `database_id` 写入当前构建环境中的 `wrangler.toml`，并执行远端 D1 migrations；不需要再手动创建 D1 或手动填写 `database_id`。
+`wrangler.toml` 不包含 `[vars]`，生产变量和密钥以 Cloudflare Dashboard 为准。
 
 ### Workers Builds 填写
 
@@ -296,7 +306,7 @@ npm run dev
 1. 进入 Cloudflare Dashboard -> `Workers & Pages` -> `Create` -> `Import a repository`。
 2. 选择 Git 仓库后，按上表填写 `Project name`、`Path`、`Build command`、`Deploy command` 和 `Non-production branch deploy command`。
 3. 在 `Settings` -> `Variables and Secrets` 配置生产变量：
-   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
+   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`DEBUG_MOD`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
    - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
 4. 在 `Settings` -> `Triggers` 确认 Cron 来自 `wrangler.toml`：`*/30 * * * *` 和 `* * * * *`。
 5. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
@@ -307,9 +317,10 @@ npm run dev
 ```text
 APP_NAME=NCT API SQL Sub
 SERVICE_PUBLIC_URL=https://sub.example.com
-MOTHER_REPORT_URL=https://api.example.com/api/sub/report
+MOTHER_REPORT_URL=https://api.example.com
 MOTHER_REPORT_TIMEOUT_MS=10000
 DATABACK_EXPORT_MIN_INTERVAL_MS=60000
+DEBUG_MOD=false
 NO_TORSION_FORM_DRY_RUN=false
 NO_TORSION_FORM_SUBMIT_TARGET=d1
 NO_TORSION_CORRECTION_SUBMIT_TARGET=d1

@@ -29,7 +29,12 @@ export type DynamicTableName =
   | 'nct_form'
   | 'nct_databack';
 
+export type DataSourceType =
+  | 'questionnaire'
+  | 'batch_query';
+
 export interface RecordWriteInput {
+  dataSourceType?: DataSourceType;
   recordKey?: string;
   payload: JsonObject;
 }
@@ -47,6 +52,7 @@ export interface RecordQueryOptions {
 }
 
 export interface TableRecord {
+  dataSourceType: DataSourceType;
   id: string;
   recordKey: string;
   payload: JsonObject;
@@ -67,6 +73,7 @@ export interface MotherReportPayload {
 }
 
 export interface MotherPushRecord {
+  dataSourceType?: DataSourceType;
   recordKey: string;
   version: number;
   fingerprint: string;
@@ -112,6 +119,7 @@ export interface MotherReportResult {
 }
 
 export interface MotherDatabackExportRecord {
+  dataSourceType: DataSourceType;
   payload: JsonObject | SecureTransferPayload;
   payloadEncryptionState: 'plain-json' | 'secure-transfer';
   recordKey: string;

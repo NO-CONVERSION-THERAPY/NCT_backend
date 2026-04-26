@@ -2,22 +2,21 @@ name = "nct-backend"
 main = "src/index.ts"
 compatibility_date = "2026-04-20"
 workers_dev = true
+routes = [
+  { pattern = "testbk.medicago.top", custom_domain = true }
+]
 
 [observability.logs]
 enabled = true
 
+# Runtime variables are intentionally not declared in [vars].
+# Set them in Cloudflare Variables / Secrets so Git-based deploys do not overwrite them.
+
 [[d1_databases]]
 binding = "DB"
 database_name = "nct-backend"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "1f06edb3-c56a-4bf1-88bd-7402e0dc344e"
 migrations_dir = "./migrations"
-
-[vars]
-APP_NAME = "NCT API SQL Sub"
-SERVICE_PUBLIC_URL = "https://sub.example.com"
-MOTHER_REPORT_URL = "https://api.example.com/api/sub/report"
-MOTHER_REPORT_TIMEOUT_MS = "10000"
-DATABACK_EXPORT_MIN_INTERVAL_MS = "60000"
 
 [triggers]
 crons = ["*/30 * * * *", "* * * * *"]

@@ -1,4 +1,5 @@
 import type {
+  DataSourceType,
   DynamicTableName,
   JsonObject,
   JsonValue,
@@ -27,6 +28,7 @@ import {
 type DynamicRow = Record<string, unknown> & {
   id: string;
   record_key: string;
+  data_source_type?: string | null;
   payload_json: string;
   created_at: string;
   updated_at: string;
@@ -53,6 +55,10 @@ const FORM_PROTECTION_SECRET_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}form_protectio
 const MOTHER_FORM_FAST_RETRY_LIMIT = 5;
 const MOTHER_FORM_FAST_RETRY_DELAY_MS = 60 * 1000;
 const MOTHER_FORM_SLOW_RETRY_DELAY_MS = 30 * 60 * 1000;
+const DATA_SOURCE_TYPES = new Set<DataSourceType>([
+  'questionnaire',
+  'batch_query',
+]);
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
@@ -105,8 +111,69 @@ function collectFieldNames(...groups: Iterable<string>[]): string[] {
   );
 }
 
+function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readSubmittedFields(values: Record<string, JsonValue>): JsonObject {
+  return isJsonObject(values.submittedFields) ? values.submittedFields : {};
+}
+
+function collectPayloadFieldNames(...payloads: JsonObject[]): string[] {
+  return collectFieldNames(
+    ...payloads.flatMap((payload) => [
+      Object.keys(payload),
+      Object.keys(readSubmittedFields(payload)),
+    ]),
+  );
+}
+
 function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function readDynamicFieldValue(
+  values: Record<string, JsonValue>,
+  fieldName: string,
+): JsonValue | undefined {
+  if (hasOwn(values, fieldName)) {
+    return values[fieldName];
+  }
+
+  const submittedFields = readSubmittedFields(values);
+  return hasOwn(submittedFields, fieldName)
+    ? submittedFields[fieldName]
+    : undefined;
+}
+
+function normalizeDataSourceType(
+  value: unknown,
+  fallback: DataSourceType,
+): DataSourceType {
+  return typeof value === 'string' && DATA_SOURCE_TYPES.has(value as DataSourceType)
+    ? value as DataSourceType
+    : fallback;
+}
+
+function inferDataSourceType(payload: JsonObject): DataSourceType {
+  const source = typeof payload.source === 'string' ? payload.source : '';
+  const recordKind = typeof payload.recordKind === 'string' ? payload.recordKind : '';
+  const publicData = isJsonObject(payload.publicData) ? payload.publicData : {};
+
+  if (
+    source === 'No-Torsion'
+    || recordKind.startsWith('no_torsion_')
+    || isJsonObject(payload.submittedFields)
+    || publicData.source === 'No-Torsion'
+    || (
+      typeof publicData.recordKind === 'string'
+      && publicData.recordKind.startsWith('no_torsion_')
+    )
+  ) {
+    return 'questionnaire';
+  }
+
+  return 'batch_query';
 }
 
 function buildInsertStatement(tableName: DynamicTableName, columns: string[]): string {
@@ -150,31 +217,47 @@ function buildDynamicAssignments(
   fieldNames: Iterable<string>,
   values: Record<string, JsonValue>
 ): ColumnAssignment[] {
-  return collectFieldNames(fieldNames).flatMap((fieldName) => {
+  const assignmentsByColumn = new Map<string, ColumnAssignment>();
+
+  for (const fieldName of collectFieldNames(fieldNames)) {
     const column = mappings.get(fieldName);
     if (!column) {
-      return [];
+      continue;
     }
 
-    return [
-      {
+    const fieldValue = readDynamicFieldValue(values, fieldName);
+    const value =
+      fieldValue === undefined
+        ? null
+        : serializeDynamicColumnValue(fieldValue);
+    const existingAssignment = assignmentsByColumn.get(column);
+
+    if (!existingAssignment || (existingAssignment.value === null && value !== null)) {
+      assignmentsByColumn.set(column, {
         column,
-        value: hasOwn(values, fieldName)
-          ? serializeDynamicColumnValue(values[fieldName])
-          : null
-      }
-    ];
-  });
+        value,
+      });
+    }
+  }
+
+  return Array.from(assignmentsByColumn.values()).sort((left, right) =>
+    left.column.localeCompare(right.column)
+  );
 }
 
 function mapTableRecord(row: DynamicRow): TableRecord {
   const payload = parseJsonObject(row.payload_json);
+  const dataSourceType = normalizeDataSourceType(
+    row.data_source_type,
+    inferDataSourceType(payload),
+  );
 
   return {
+    dataSourceType,
     id: row.id,
     recordKey: row.record_key,
     payload,
-    dynamicColumns: extractDynamicColumns(row, Object.keys(payload)),
+    dynamicColumns: extractDynamicColumns(row, collectPayloadFieldNames(payload)),
     version: row.version === undefined ? undefined : Number(row.version),
     fingerprint:
       typeof row.fingerprint === 'string'
@@ -406,6 +489,10 @@ export async function writeRecord(
 ): Promise<TableRecord> {
   const payload = toJsonObject(input.payload);
   const recordKey = readRecordKey(input);
+  const dataSourceType = normalizeDataSourceType(
+    input.dataSourceType,
+    inferDataSourceType(payload),
+  );
   const payloadJson = stableStringify(payload);
   const receivedAt = nowIso();
   const existingRow = await db
@@ -421,10 +508,7 @@ export async function writeRecord(
   const previousPayload = existingRow
     ? parseJsonObject(existingRow.payload_json)
     : {};
-  const fieldNames = collectFieldNames(
-    Object.keys(previousPayload),
-    Object.keys(payload)
-  );
+  const fieldNames = collectPayloadFieldNames(previousPayload, payload);
   const dynamicColumnMappings = await ensureDynamicColumns(
     db,
     tableName,
@@ -455,6 +539,13 @@ export async function writeRecord(
                 'mother_assigned_version',
               ]
         ),
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                'data_source_type',
+              ]
+        ),
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
       const updateValues = [
@@ -470,6 +561,13 @@ export async function writeRecord(
                 null,
                 null,
                 null,
+              ]
+        ),
+        ...(
+          isSystemRecord
+            ? []
+            : [
+                dataSourceType,
               ]
         ),
         ...dynamicAssignments.map((assignment) => assignment.value),
@@ -491,6 +589,7 @@ export async function writeRecord(
           isSystemRecord
             ? []
             : [
+                'data_source_type',
                 'mother_sync_status',
                 'mother_sync_attempts',
               ]
@@ -507,6 +606,7 @@ export async function writeRecord(
           isSystemRecord
             ? []
             : [
+                dataSourceType,
                 'pending',
                 0,
               ]
@@ -535,6 +635,7 @@ export async function writeRecord(
         'version',
         'fingerprint',
         'payload_encryption_state',
+        'data_source_type',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
@@ -543,6 +644,7 @@ export async function writeRecord(
         nextVersion,
         fingerprint,
         'plain-json',
+        dataSourceType,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value),
         rowId
@@ -560,6 +662,7 @@ export async function writeRecord(
         'version',
         'fingerprint',
         'payload_encryption_state',
+        'data_source_type',
         'created_at',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
@@ -571,6 +674,7 @@ export async function writeRecord(
         nextVersion,
         fingerprint,
         'plain-json',
+        dataSourceType,
         receivedAt,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value)
@@ -616,6 +720,10 @@ export async function importMotherPushRecords(
   for (const record of records) {
     const recordKey = record.recordKey.trim();
     const payload = toJsonObject(record.payload);
+    const dataSourceType = normalizeDataSourceType(
+      record.dataSourceType,
+      inferDataSourceType(payload),
+    );
     const payloadJson = stableStringify(payload);
     const incomingVersion = Math.max(0, Number(record.version));
     const fingerprint = record.fingerprint.trim();
@@ -647,10 +755,7 @@ export async function importMotherPushRecords(
     const previousPayload = existingRow
       ? parseJsonObject(existingRow.payload_json)
       : {};
-    const fieldNames = collectFieldNames(
-      Object.keys(previousPayload),
-      Object.keys(payload)
-    );
+    const fieldNames = collectPayloadFieldNames(previousPayload, payload);
     const dynamicColumnMappings = await ensureDynamicColumns(
       db,
       'nct_databack',
@@ -669,6 +774,7 @@ export async function importMotherPushRecords(
         'version',
         'fingerprint',
         'payload_encryption_state',
+        'data_source_type',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
       ];
@@ -677,6 +783,7 @@ export async function importMotherPushRecords(
         incomingVersion,
         fingerprint,
         'secure-transfer',
+        dataSourceType,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value),
         rowId
@@ -694,6 +801,7 @@ export async function importMotherPushRecords(
         'version',
         'fingerprint',
         'payload_encryption_state',
+        'data_source_type',
         'created_at',
         'updated_at',
         ...dynamicAssignments.map((assignment) => assignment.column)
@@ -705,6 +813,7 @@ export async function importMotherPushRecords(
         incomingVersion,
         fingerprint,
         'secure-transfer',
+        dataSourceType,
         receivedAt,
         receivedAt,
         ...dynamicAssignments.map((assignment) => assignment.value)
@@ -771,6 +880,10 @@ export async function exportDatabackFile(
         : await computeRecordContentFingerprint(payload);
 
     records.push({
+      dataSourceType: normalizeDataSourceType(
+        row.data_source_type,
+        inferDataSourceType(payload),
+      ),
       payload: isSecureTransferPayload(payloadCandidate)
         ? payloadCandidate
         : payload,

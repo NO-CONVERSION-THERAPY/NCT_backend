@@ -76,7 +76,7 @@ describe('reportToMother', () => {
   it('skips reporting when no public service URL can be resolved', async () => {
     const result = await reportToMother({
       DB: {} as D1Database,
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
     } as Env);
 
     expect(result).toEqual({
@@ -101,7 +101,7 @@ describe('reportToMother', () => {
       {
         DB: {} as D1Database,
         APP_NAME: 'Sub App',
-        MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+        MOTHER_REPORT_URL: 'https://mother.example.com',
         MOTHER_REPORT_TIMEOUT_MS: '2500',
       } as Env,
       {
@@ -155,7 +155,7 @@ describe('reportToMother', () => {
     const result = await reportToMother({
       DB: {} as D1Database,
       APP_NAME: 'Sub App',
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
       SERVICE_PUBLIC_URL: 'https://sub.example.com',
     } as Env);
 
@@ -185,7 +185,7 @@ describe('reportToMother', () => {
       DB: {} as D1Database,
       APP_NAME: 'Sub App',
       SERVICE_PUBLIC_URL: 'https://sub.example.com',
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
     } as Env);
 
     expect(result).toMatchObject({
@@ -202,7 +202,7 @@ describe('reportToMother', () => {
     const result = await reportToMother({
       DB: {} as D1Database,
       SERVICE_PUBLIC_URL: 'https://sub.example.com',
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
     } as Env);
 
     expect(result).toMatchObject({
@@ -266,7 +266,7 @@ describe('flushPendingMotherFormRecords', () => {
 
     const result = await flushPendingMotherFormRecords({
       DB: {} as D1Database,
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
       SERVICE_PUBLIC_URL: 'https://sub.example.com',
     } as Env);
 
@@ -316,7 +316,7 @@ describe('syncFromMother', () => {
   it('is deprecated because the mother service now pushes secure records', async () => {
     const result = await syncFromMother({
       DB: {} as D1Database,
-      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      MOTHER_REPORT_URL: 'https://mother.example.com',
     } as Env);
 
     expect(result).toEqual({

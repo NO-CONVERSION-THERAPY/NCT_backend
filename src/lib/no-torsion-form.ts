@@ -488,13 +488,7 @@ export function buildGoogleFormSubmitUrl(options: {
   defaultFormId?: string;
   defaultFormIdSuffix?: string;
   formId?: string;
-  fullUrl?: string;
 }): string {
-  const configuredUrl = readTrimmedEnvValue(options.fullUrl);
-  if (configuredUrl) {
-    return normalizeGoogleFormSubmitUrl(configuredUrl);
-  }
-
   let resolvedFormId = readTrimmedEnvValue(options.formId);
   if (!resolvedFormId && options.defaultFormId) {
     resolvedFormId = options.defaultFormId;
@@ -505,9 +499,7 @@ export function buildGoogleFormSubmitUrl(options: {
   }
 
   if (/^https?:\/\//i.test(resolvedFormId)) {
-    return buildGoogleFormSubmitUrl({
-      fullUrl: resolvedFormId,
-    });
+    return '';
   }
 
   if (
@@ -527,7 +519,6 @@ function getFormGoogleSubmitUrl(env: Env): string {
   return buildGoogleFormSubmitUrl({
     defaultFormId: '1FAIpQLScolfqJ9dbvJxhjoKYVlmKGwHmy7RiQThutDXpKj7W7jGytfg',
     formId: readTrimmedEnvValue(env.NO_TORSION_FORM_ID),
-    fullUrl: readTrimmedEnvValue(env.NO_TORSION_GOOGLE_FORM_URL),
   });
 }
 
@@ -536,7 +527,6 @@ function getCorrectionGoogleSubmitUrl(env: Env): string {
     defaultFormId: '1FAIpQLSfiXdpt8CgOGZQhvsJTc1koQbvXFo6eWfnigQ329r1',
     defaultFormIdSuffix: '-3DniNA',
     formId: readTrimmedEnvValue(env.NO_TORSION_CORRECTION_FORM_ID),
-    fullUrl: readTrimmedEnvValue(env.NO_TORSION_CORRECTION_GOOGLE_FORM_URL),
   });
 }
 
@@ -664,21 +654,6 @@ function validateChoiceValues(
   }
 
   return validValues;
-}
-
-function appendTextBlock(baseValue: string, appendedValue: string): string {
-  const baseText = getTrimmedString(baseValue);
-  const extraText = getTrimmedString(appendedValue);
-
-  if (!baseText) {
-    return extraText;
-  }
-
-  if (!extraText) {
-    return baseText;
-  }
-
-  return `${baseText}\n${extraText}`;
 }
 
 function validateFinalLength(
@@ -1050,6 +1025,7 @@ export function buildGoogleFormFields(values: NoTorsionFormValues): GoogleFormFi
     },
     { entryId: 'entry.38011337', value: values.schoolAwarenessBeforeEntry },
     { entryId: 'entry.578287646', value: values.experience },
+    { entryId: 'entry.93256047', value: values.exitMethod },
     { entryId: 'entry.1184547907', value: values.legalAidStatus },
     { entryId: 'entry.5034928', value: values.schoolName },
     {
@@ -1656,63 +1632,11 @@ export function validateNoTorsionFormSubmission(
     }
   }
 
-  let experience = experienceInput;
+  const experience = experienceInput;
   const schoolAwarenessBeforeEntry =
     identity === SELF_IDENTITY ? schoolAwarenessBeforeEntryInput : '';
-  let scandal = scandalInput;
-  let other = otherInput;
-
-  if (identity === AGENT_IDENTITY && agentRelationship) {
-    other = appendTextBlock(other, `填表人为受害人的${agentRelationship}。`);
-  }
-
-  if (standaloneEnhancements) {
-    if (exitMethod) {
-      experience = appendTextBlock(experience, `离开机构的方式为：${exitMethod}`);
-    }
-
-    if (violenceCategories.length > 0) {
-      scandal = appendTextBlock(
-        scandal,
-        `机构丑闻及暴力行为包括：${violenceCategories.join('；')}`,
-      );
-    }
-
-    const preInstitutionProvince = validatedPreInstitutionLocation
-      ? validatedPreInstitutionLocation.legacyProvinceName
-      : validatedPreInstitutionProvince?.legacyProvinceName ?? '';
-    const preInstitutionCity = validatedPreInstitutionLocation?.cityName ?? '';
-
-    if (preInstitutionProvince || preInstitutionCity) {
-      other = appendTextBlock(
-        other,
-        `进入机构前位于${[preInstitutionProvince, preInstitutionCity]
-          .filter(Boolean)
-          .join('')}。`,
-      );
-    }
-
-    if (parentMotivations.length > 0) {
-      other = appendTextBlock(
-        other,
-        `被送去机构的原因为：${parentMotivations.join('；')}`,
-      );
-    }
-
-    if (abuserInfo) {
-      other = appendTextBlock(
-        other,
-        `已知施暴者/教官基本信息与描述：${abuserInfo}`,
-      );
-    }
-
-    if (legalAidStatus) {
-      other = appendTextBlock(
-        other,
-        `举报和寻求法律援助情况：${legalAidStatus}`,
-      );
-    }
-  }
+  const scandal = scandalInput;
+  const other = otherInput;
 
   validateFinalLength(
     errors,
@@ -1982,10 +1906,12 @@ export async function confirmNoTorsionFormSubmission(
           clientIpHash,
         );
         await writeRecord(db, 'nct_form', {
+          dataSourceType: 'questionnaire',
           payload,
           recordKey,
         });
         await writeRecord(db, 'nct_databack', {
+          dataSourceType: 'questionnaire',
           payload,
           recordKey,
         });
@@ -2056,10 +1982,12 @@ export async function submitNoTorsionCorrection(
           clientIpHash,
         );
         await writeRecord(db, 'nct_form', {
+          dataSourceType: 'questionnaire',
           payload,
           recordKey,
         });
         await writeRecord(db, 'nct_databack', {
+          dataSourceType: 'questionnaire',
           payload,
           recordKey,
         });

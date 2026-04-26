@@ -95,7 +95,13 @@ describe('submitNoTorsionCorrection', () => {
     };
 
     expect(formInput.recordKey).toMatch(/^no-torsion:correction:/);
+    expect(formInput).toMatchObject({
+      dataSourceType: 'questionnaire',
+    });
     expect(databackInput.recordKey).toBe(formInput.recordKey);
+    expect(databackInput).toMatchObject({
+      dataSourceType: 'questionnaire',
+    });
     expect(databackInput.payload).toEqual(formInput.payload);
     expect(formInput.payload).toMatchObject({
       city: '广州市',
@@ -185,6 +191,12 @@ describe('submitNoTorsionFormSubmission', () => {
     };
 
     expect(databackInput.recordKey).toBe(formInput.recordKey);
+    expect(formInput).toMatchObject({
+      dataSourceType: 'questionnaire',
+    });
+    expect(databackInput).toMatchObject({
+      dataSourceType: 'questionnaire',
+    });
     expect(databackInput.payload).toEqual(formInput.payload);
     expect(formInput.payload.submittedFields).toMatchObject({
       extra_future_field: '未来新增字段',
@@ -232,13 +244,12 @@ describe('Google Form submit URL helpers', () => {
     );
   });
 
-  it('accepts a full Google Form URL in either config field', () => {
-    expect(buildGoogleFormSubmitUrl({ fullUrl: GOOGLE_FORM_DOCUMENT_URL })).toBe(
-      `${GOOGLE_FORM_DOCUMENT_URL}/formResponse`,
-    );
-    expect(buildGoogleFormSubmitUrl({ formId: `${GOOGLE_FORM_DOCUMENT_URL}/viewform` })).toBe(
-      `${GOOGLE_FORM_DOCUMENT_URL}/formResponse`,
-    );
+  it('requires the Google Form ID config to be an ID, not a full URL', () => {
+    expect(
+      buildGoogleFormSubmitUrl({
+        formId: `${GOOGLE_FORM_DOCUMENT_URL}/viewform`,
+      }),
+    ).toBe('');
   });
 });
 
@@ -256,9 +267,12 @@ describe('buildGoogleFormFields', () => {
       date_end: '2024-02-02',
       date_start: '2024-01-02',
       experience: '个人经历描述。',
+      exit_method: '自行逃离',
       form_variant: 'react_portal_enhanced',
+      headmaster_name: '负责人',
       identity: SELF_IDENTITY,
       legal_aid_status: '想但不知道途径',
+      other: '其它补充。',
       parent_motivations: ['"厌学"/学业问题', '亲属或身边人建议'],
       pre_institution_city_code: '440100',
       pre_institution_province_code: '440000',
@@ -278,6 +292,37 @@ describe('buildGoogleFormFields', () => {
     const fields = validationResult.ok
       ? fieldValueByEntryId(buildGoogleFormFields(validationResult.values))
       : new Map<string, string>();
+    const expectedStandaloneQuestionEntries = [
+      'entry.500021634',
+      'entry.981546984',
+      'entry.842223433',
+      'entry.1422578992',
+      'entry.145491361',
+      'entry.1367743406',
+      'entry.1344969670',
+      'entry.129670533',
+      'entry.681431781',
+      'entry.38011337',
+      'entry.578287646',
+      'entry.93256047',
+      'entry.1184547907',
+      'entry.5034928',
+      'entry.1766160152',
+      'entry.402227428',
+      'entry.1624809773',
+      'entry.1390240202',
+      'entry.534528800',
+      'entry.883193772',
+      'entry.1533497153',
+      'entry.1085954426',
+      'entry.1895858332',
+      'entry.1400127416',
+      'entry.2022959936',
+    ];
+
+    expectedStandaloneQuestionEntries.forEach((entryId) => {
+      expect(fields.has(entryId), `${entryId} should be mapped`).toBe(true);
+    });
 
     expect(fields.get('entry.500021634')).toBe(SELF_IDENTITY);
     expect(fields.get('entry.981546984')).toBe('__other_option__');
@@ -290,7 +335,9 @@ describe('buildGoogleFormFields', () => {
     expect(fields.get('entry.129670533')).toBe('2024-02-02');
     expect(fields.get('entry.681431781')).toBe('"厌学"/学业问题；亲属或身边人建议');
     expect(fields.get('entry.38011337')).toBe('进去前听说过相关新闻。');
-    expect(fields.get('entry.578287646')).toContain('个人经历描述。');
+    expect(fields.get('entry.578287646')).toBe('个人经历描述。');
+    expect(fields.get('entry.578287646')).not.toContain('离开机构的方式');
+    expect(fields.get('entry.93256047')).toBe('自行逃离');
     expect(fields.get('entry.1184547907')).toBe('想但不知道途径');
     expect(fields.get('entry.5034928')).toBe('测试机构');
     expect(fields.get('entry.1766160152')).toBe('廣東');
@@ -299,9 +346,15 @@ describe('buildGoogleFormFields', () => {
     expect(fields.get('entry.1390240202')).toBe('测试地址');
     expect(fields.get('entry.534528800')).toBe('23.129110, 113.264385');
     expect(fields.get('entry.883193772')).toBe('contact@example.com');
+    expect(fields.get('entry.1533497153')).toBe('负责人');
     expect(fields.get('entry.1085954426')).toBe('测试施暴者信息。');
     expect(fields.get('entry.1895858332')).toBe('体罚（如长跑等）；辱骂或公开羞辱');
-    expect(fields.get('entry.1400127416')).toContain('详细描述。');
+    expect(fields.get('entry.1400127416')).toBe('详细描述。');
+    expect(fields.get('entry.1400127416')).not.toContain('机构丑闻及暴力行为包括');
+    expect(fields.get('entry.2022959936')).toBe('其它补充。');
+    expect(fields.get('entry.2022959936')).not.toContain('被送去机构的原因');
+    expect(fields.get('entry.2022959936')).not.toContain('举报和寻求法律援助情况');
+    expect(fields.get('entry.2022959936')).not.toContain('已知施暴者');
   });
 
   it('normalizes representative relationships for Google Form choice options', () => {
@@ -398,9 +451,7 @@ describe('validateNoTorsionFormSubmission', () => {
 
     expect(customResult.ok).toBe(true);
     expect(customResult.ok ? customResult.values.agentRelationship : '').toBe('老师');
-    expect(customResult.ok ? customResult.values.other : '').toContain(
-      '填表人为受害人的老师。',
-    );
+    expect(customResult.ok ? customResult.values.other : 'x').toBe('');
   });
 
   it('keeps representative relationship optional unless custom text is requested', () => {

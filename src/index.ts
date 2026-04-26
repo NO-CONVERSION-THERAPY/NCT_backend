@@ -13,7 +13,8 @@ import {
   issueFormProtectionToken,
   prepareNoTorsionFormSubmission,
   submitNoTorsionCorrection,
-  type NoTorsionConfirmResult
+  type NoTorsionConfirmResult,
+  type NoTorsionFormValues,
 } from './lib/no-torsion-form';
 import { translateDetailItems } from './lib/no-torsion-translation';
 import { parseJsonObject, stableStringify, toJsonObject } from './lib/json';
@@ -24,6 +25,7 @@ import {
 } from './lib/report';
 import { readBearerToken, verifyServiceAuthToken } from './lib/service-auth';
 import {
+  NoTorsionStandaloneDebugPage,
   NoTorsionStandaloneFormPage,
   NoTorsionStandalonePreviewPage,
   NoTorsionStandaloneResultPage,
@@ -98,6 +100,7 @@ function parseMotherPushBody(input: unknown): MotherPushRecord[] {
     }
 
     const entry = record as {
+      dataSourceType?: unknown;
       fingerprint?: unknown;
       payload?: unknown;
       recordKey?: unknown;
@@ -130,6 +133,10 @@ function parseMotherPushBody(input: unknown): MotherPushRecord[] {
     }
 
     return {
+      dataSourceType:
+        entry.dataSourceType === 'questionnaire' || entry.dataSourceType === 'batch_query'
+          ? entry.dataSourceType
+          : undefined,
       fingerprint: entry.fingerprint,
       payload: payload as MotherPushRecord['payload'],
       recordKey: entry.recordKey,
@@ -412,12 +419,81 @@ const NO_TORSION_STANDALONE_FORM_CONFIRM_PATH = '/form/confirm';
 const NO_TORSION_LEGACY_FORM_PATH = '/no-torsion/form';
 const NO_TORSION_LEGACY_FORM_CONFIRM_PATH = '/no-torsion/form/confirm';
 
+const DEBUG_SAMPLE_FORM_VALUES: NoTorsionFormValues = {
+  abuserInfo: 'Debug sample instructor information.',
+  agentRelationship: '',
+  birthDate: '2000-01-01',
+  birthDay: '1',
+  birthMonth: '1',
+  birthYear: '2000',
+  city: '北京市',
+  cityCode: '110101',
+  contactInformation: 'debug-preview@example.com',
+  county: '东城区',
+  countyCode: '110101',
+  dateEnd: '2024-02-02',
+  dateStart: '2024-01-01',
+  exitMethod: '自行逃离',
+  experience: 'Debug sample experience.',
+  googleFormAge: 24,
+  headmasterName: 'Debug headmaster',
+  identity: '受害者本人',
+  latitude: 39.9042,
+  legalAidStatus: '想但不知道途径',
+  longitude: 116.4074,
+  other: 'Debug sample other notes.',
+  parentMotivations: ['"网瘾"/游戏沉迷'],
+  preInstitutionCity: '',
+  preInstitutionCityCode: '',
+  preInstitutionProvince: '',
+  preInstitutionProvinceCode: '',
+  province: '北京',
+  provinceCode: '110000',
+  scandal: 'Debug sample scandal detail.',
+  schoolAddress: 'Debug sample address',
+  schoolAwarenessBeforeEntry: 'Debug sample awareness before entry.',
+  schoolCoordinates: '39.904200, 116.407400',
+  schoolName: 'Debug sample institution',
+  sex: '女性',
+  standaloneEnhancements: true,
+  submittedFields: {},
+  violenceCategories: ['辱骂或公开羞辱'],
+};
+
 function buildStandaloneFormHref(language: 'en' | 'zh-CN' | 'zh-TW'): string {
   return `${NO_TORSION_STANDALONE_FORM_PATH}?lang=${encodeURIComponent(language)}`;
 }
 
 function buildStandaloneFormConfirmHref(language: 'en' | 'zh-CN' | 'zh-TW'): string {
   return `${NO_TORSION_STANDALONE_FORM_CONFIRM_PATH}?lang=${encodeURIComponent(language)}`;
+}
+
+function buildStandaloneHomeHref(
+  context: Context<{ Bindings: Env }>,
+  language: 'en' | 'zh-CN' | 'zh-TW',
+): string {
+  const fallback = `/?lang=${encodeURIComponent(language)}`;
+  const currentOrigin = new URL(context.req.url).origin;
+  const referer = context.req.header('referer');
+
+  if (!referer) {
+    return fallback;
+  }
+
+  try {
+    const refererUrl = new URL(referer);
+    if (refererUrl.origin && refererUrl.origin !== currentOrigin) {
+      refererUrl.pathname = '/';
+      refererUrl.search = '';
+      refererUrl.hash = '';
+      refererUrl.searchParams.set('lang', language);
+      return refererUrl.toString();
+    }
+  } catch (_error) {
+    return fallback;
+  }
+
+  return fallback;
 }
 
 function buildStandaloneFailureResult(message: string): NoTorsionConfirmResult {
@@ -435,6 +511,97 @@ function buildStandaloneFailureResult(message: string): NoTorsionConfirmResult {
     },
     successfulTargets: []
   };
+}
+
+function isDebugMode(env: Env): boolean {
+  return String(env.DEBUG_MOD ?? '').trim().toLowerCase() === 'true';
+}
+
+function buildDebugSuccessResult(): NoTorsionConfirmResult {
+  return {
+    encodedPayload: 'entry.debug=success',
+    resultsByTarget: {
+      d1: {
+        ok: true,
+        recordKey: 'debug:no-torsion:form',
+      },
+      google: {
+        ok: true,
+      },
+    },
+    successfulTargets: ['d1', 'google'],
+  };
+}
+
+function buildDebugPageLinks(language: 'en' | 'zh-CN' | 'zh-TW') {
+  const suffix = `?lang=${encodeURIComponent(language)}`;
+  const zhTw = language === 'zh-TW';
+  const en = language === 'en';
+
+  return [
+    {
+      description: en ? 'Service root form page.' : zhTw ? '服務根路由表單頁。' : '服务根路由表单页。',
+      href: `/${suffix}`,
+      label: '/',
+    },
+    {
+      description: en ? 'Standalone form page.' : zhTw ? '獨立表單頁。' : '独立表单页。',
+      href: `${NO_TORSION_STANDALONE_FORM_PATH}${suffix}`,
+      label: NO_TORSION_STANDALONE_FORM_PATH,
+    },
+    {
+      description: en ? 'Legacy form page alias.' : zhTw ? '舊版表單頁別名。' : '旧版表单页别名。',
+      href: `${NO_TORSION_LEGACY_FORM_PATH}${suffix}`,
+      label: NO_TORSION_LEGACY_FORM_PATH,
+    },
+    {
+      description: en ? 'Dry-run preview page.' : zhTw ? 'Dry-run 預覽頁。' : 'Dry-run 预览页。',
+      href: `/debug/submit-preview${suffix}`,
+      label: '/debug/submit-preview',
+    },
+    {
+      description: en ? 'Confirmation page preview.' : zhTw ? '確認頁預覽。' : '确认页预览。',
+      href: `/debug/submit-confirm${suffix}`,
+      label: '/debug/submit-confirm',
+    },
+    {
+      description: en ? 'Success result page preview.' : zhTw ? '成功結果頁預覽。' : '成功结果页预览。',
+      href: `/debug/submit-success${suffix}`,
+      label: '/debug/submit-success',
+    },
+    {
+      description: en ? 'Error result page preview.' : zhTw ? '錯誤結果頁預覽。' : '错误结果页预览。',
+      href: `/debug/submit-error${suffix}`,
+      label: '/debug/submit-error',
+    },
+  ];
+}
+
+function buildDebugApiLinks(language: 'en' | 'zh-CN' | 'zh-TW') {
+  const en = language === 'en';
+  const zhTw = language === 'zh-TW';
+
+  return [
+    {
+      description: en ? 'Health JSON.' : zhTw ? '健康檢查 JSON。' : '健康检查 JSON。',
+      href: '/api/health',
+      label: '/api/health',
+    },
+    {
+      description: en ? 'Form runtime token JSON.' : zhTw ? '表單執行期 token JSON。' : '表单运行时 token JSON。',
+      href: '/api/no-torsion/frontend-runtime?scope=form',
+      label: '/api/no-torsion/frontend-runtime?scope=form',
+    },
+    {
+      description: en ? 'Correction runtime token JSON.' : zhTw ? '更正表單執行期 token JSON。' : '更正表单运行时 token JSON。',
+      href: '/api/no-torsion/frontend-runtime?scope=correction',
+      label: '/api/no-torsion/frontend-runtime?scope=correction',
+    },
+  ];
+}
+
+function buildDebugHref(path: string, language: 'en' | 'zh-CN' | 'zh-TW'): string {
+  return `${path}?lang=${encodeURIComponent(language)}`;
 }
 
 app.use(
@@ -459,6 +626,7 @@ async function renderNoTorsionStandaloneFormPage(
   return context.html(
     renderToString(
       NoTorsionStandaloneFormPage({
+        homeHref: buildStandaloneHomeHref(context, language),
         lang: language,
         token
       })
@@ -619,6 +787,140 @@ async function handleNoTorsionStandaloneFormConfirmation(
 
 app.post(NO_TORSION_STANDALONE_FORM_CONFIRM_PATH, handleNoTorsionStandaloneFormConfirmation);
 app.post(NO_TORSION_LEGACY_FORM_CONFIRM_PATH, handleNoTorsionStandaloneFormConfirmation);
+
+function assertDebugRoute(context: Context<{ Bindings: Env }>): Response | null {
+  if (isDebugMode(context.env)) {
+    return null;
+  }
+
+  return context.text('Not found', 404);
+}
+
+app.get('/debug', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+
+  return context.html(
+    renderToString(
+      NoTorsionStandaloneDebugPage({
+        apiLinks: buildDebugApiLinks(language),
+        lang: language,
+        pageLinks: buildDebugPageLinks(language),
+      })
+    )
+  );
+});
+
+app.get('/debug/submit-preview', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+
+  return context.html(
+    renderToString(
+      NoTorsionStandalonePreviewPage({
+        backHref: buildDebugHref('/debug', language),
+        formAction: buildStandaloneFormConfirmHref(language),
+        lang: language,
+        mode: 'preview',
+        values: DEBUG_SAMPLE_FORM_VALUES,
+      })
+    )
+  );
+});
+
+app.get('/debug/submit-confirm', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+
+  return context.html(
+    renderToString(
+      NoTorsionStandalonePreviewPage({
+        backHref: buildDebugHref('/debug', language),
+        confirmationPayload: 'debug-confirmation-payload',
+        confirmationToken: 'debug-confirmation-token',
+        formAction: buildDebugHref('/debug/submit-confirm', language),
+        lang: language,
+        mode: 'confirm',
+        values: DEBUG_SAMPLE_FORM_VALUES,
+      })
+    )
+  );
+});
+
+app.post('/debug/submit-confirm', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const body = await parseFormBody(context.req.raw);
+  const language = resolveNoTorsionLanguage(
+    typeof body.lang === 'string' ? body.lang : context.req.query('lang')
+  );
+
+  return context.html(
+    renderToString(
+      NoTorsionStandaloneResultPage({
+        backHref: buildDebugHref('/debug', language),
+        lang: language,
+        result: buildDebugSuccessResult(),
+        statusCode: 200,
+      })
+    )
+  );
+});
+
+app.get('/debug/submit-success', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+
+  return context.html(
+    renderToString(
+      NoTorsionStandaloneResultPage({
+        backHref: buildDebugHref('/debug', language),
+        lang: language,
+        result: buildDebugSuccessResult(),
+        statusCode: 200,
+      })
+    )
+  );
+});
+
+app.get('/debug/submit-error', async (context) => {
+  const debugResponse = assertDebugRoute(context);
+  if (debugResponse) {
+    return debugResponse;
+  }
+
+  const language = resolveNoTorsionLanguage(context.req.query('lang'));
+
+  return context.html(
+    renderToString(
+      NoTorsionStandaloneResultPage({
+        backHref: buildDebugHref('/debug', language),
+        lang: language,
+        result: buildStandaloneFailureResult('Debug sample submission error.'),
+        statusCode: 500,
+      })
+    )
+  );
+});
 
 app.get('/api/health', async (context) => {
   const [counts, currentDatabackVersion] = await Promise.all([

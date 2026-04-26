@@ -191,10 +191,28 @@ describe('No-Torsion backend routes', () => {
     expect(html).toContain('public-form-token');
     expect(html).toContain('Conversion Institution Survivor Questionnaire');
     expect(html).toContain('data-standalone-language-link="zh-CN"');
+    expect(html).toContain('Back to home');
     expect(html).toContain('/form?lang=en');
     expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({ DB: expect.anything() }),
     );
+  });
+
+  it('uses the frontend origin as the standalone form home link when embedded', async () => {
+    issueFormProtectionTokenMock.mockResolvedValue('embedded-public-form-token');
+
+    const response = await app.fetch(
+      new Request('https://sub.example.com/form?lang=en', {
+        headers: {
+          referer: 'https://nct.example.com/form?lang=en',
+        },
+      }),
+      createEnv(),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('href="https://nct.example.com/?lang=en" target="_top"');
   });
 
   it('renders the standalone form page at the service root', async () => {
@@ -224,6 +242,76 @@ describe('No-Torsion backend routes', () => {
     expect(response.status).toBe(200);
     expect(html).toContain('legacy-public-form-token');
     expect(html).toContain('/form?lang=en');
+  });
+
+  it('hides debug pages unless DEBUG_MOD is enabled', async () => {
+    const response = await app.fetch(
+      new Request('https://sub.example.com/debug'),
+      createEnv({ DEBUG_MOD: 'false' }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('renders a debug index with links to standalone page routes when DEBUG_MOD is enabled', async () => {
+    const response = await app.fetch(
+      new Request('https://sub.example.com/debug?lang=en'),
+      createEnv({ DEBUG_MOD: 'true' }),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Debug routes');
+    expect(html).toContain('data-standalone-language-link="zh-CN" href="/debug?lang=zh-CN"');
+    expect(html).toContain('/form?lang=en');
+    expect(html).toContain('/no-torsion/form?lang=en');
+    expect(html).toContain('/debug/submit-preview?lang=en');
+    expect(html).toContain('/debug/submit-confirm?lang=en');
+    expect(html).toContain('/debug/submit-success?lang=en');
+    expect(html).toContain('/debug/submit-error?lang=en');
+    expect(html).toContain('/api/no-torsion/frontend-runtime?scope=form');
+  });
+
+  it('renders debug preview, confirm, success, and error pages when DEBUG_MOD is enabled', async () => {
+    const env = createEnv({ DEBUG_MOD: 'true' });
+    const [previewResponse, confirmResponse, successResponse, errorResponse] =
+      await Promise.all([
+        app.fetch(new Request('https://sub.example.com/debug/submit-preview?lang=en'), env),
+        app.fetch(new Request('https://sub.example.com/debug/submit-confirm?lang=en'), env),
+        app.fetch(new Request('https://sub.example.com/debug/submit-success?lang=en'), env),
+        app.fetch(new Request('https://sub.example.com/debug/submit-error?lang=en'), env),
+      ]);
+
+    expect(previewResponse.status).toBe(200);
+    expect(await previewResponse.text()).toContain('Debug sample institution');
+    expect(confirmResponse.status).toBe(200);
+    expect(await confirmResponse.text()).toContain('debug-confirmation-payload');
+    expect(successResponse.status).toBe(200);
+    expect(await successResponse.text()).toContain('Delivered');
+    expect(errorResponse.status).toBe(200);
+    expect(await errorResponse.text()).toContain('Debug sample submission error.');
+  });
+
+  it('simulates debug confirmation without submitting real data', async () => {
+    const response = await app.fetch(
+      new Request('https://sub.example.com/debug/submit-confirm?lang=en', {
+        body: new URLSearchParams({
+          confirmation_payload: 'debug-confirmation-payload',
+          confirmation_token: 'debug-confirmation-token',
+          lang: 'en',
+        }),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        method: 'POST',
+      }),
+      createEnv({ DEBUG_MOD: 'true' }),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Submission complete');
+    expect(html).toContain('Delivered');
   });
 
   it('renders the public standalone preview page after posting the Hono form', async () => {

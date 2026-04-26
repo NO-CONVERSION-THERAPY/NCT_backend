@@ -208,6 +208,7 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toMatchObject({
+      dataSourceType: 'batch_query',
       payload: {
         city: 'Shanghai',
         email: 'demo@example.com',
@@ -268,6 +269,7 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toEqual({
+      dataSourceType: 'batch_query',
       payload: securePayload,
       payloadEncryptionState: 'secure-transfer',
       recordKey: 'patient-2',

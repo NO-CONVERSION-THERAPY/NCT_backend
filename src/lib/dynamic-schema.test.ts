@@ -51,13 +51,22 @@ function createFakeDb(
 }
 
 describe('dynamic schema helpers', () => {
-  it('normalizes reserved field names into safe dynamic columns', () => {
+  it('uses questionnaire question names for known fields', () => {
+    expect(dynamicColumnName('schoolName')).toBe('机构名称');
+    expect(dynamicColumnName('school_name')).toBe('机构名称');
+    expect(dynamicColumnName('exitMethod')).toBe('离开机构的方式');
+    expect(dynamicColumnName('longitude')).toBe('经度');
+    expect(dynamicColumnName('latitude')).toBe('纬度');
+  });
+
+  it('normalizes reserved and unknown field names into safe dynamic columns', () => {
     expect(dynamicColumnName('payload_json')).toMatch(
-      /^field_payload_json_[a-z0-9]+$/,
+      /^字段_field_payload_json_[a-z0-9]+$/,
     );
     expect(dynamicColumnName('123 phone')).toMatch(
-      /^f_123_phone_[a-z0-9]+$/,
+      /^字段_f_123_phone_[a-z0-9]+$/,
     );
+    expect(dynamicColumnName('未来新增问题')).toBe('未来新增问题');
   });
 
   it('adds missing dynamic columns once per trimmed field name', async () => {
