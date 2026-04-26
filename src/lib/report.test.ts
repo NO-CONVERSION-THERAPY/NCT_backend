@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   bumpServiceReportCountMock,
+  getSchoolMediaStatsMock,
   getNullableDatabackVersionMock,
   hmacSha256Mock,
   listPendingMotherFormSyncRecordsMock,
@@ -11,6 +12,7 @@ const {
 } =
   vi.hoisted(() => ({
     bumpServiceReportCountMock: vi.fn(),
+    getSchoolMediaStatsMock: vi.fn(),
     getNullableDatabackVersionMock: vi.fn(),
     hmacSha256Mock: vi.fn(),
     listPendingMotherFormSyncRecordsMock: vi.fn(),
@@ -25,6 +27,13 @@ vi.mock('./data', () => ({
   listPendingMotherFormSyncRecords: listPendingMotherFormSyncRecordsMock,
   markMotherFormSyncFailure: markMotherFormSyncFailureMock,
   markMotherFormSyncSuccess: markMotherFormSyncSuccessMock,
+}));
+
+vi.mock('./media', () => ({
+  getSchoolMediaStats: getSchoolMediaStatsMock,
+  listPendingMotherMediaSyncRecords: vi.fn().mockResolvedValue([]),
+  markMotherMediaSyncFailure: vi.fn(),
+  markMotherMediaSyncSuccess: vi.fn(),
 }));
 
 vi.mock('./crypto', () => ({
@@ -44,6 +53,14 @@ describe('reportToMother', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
     getNullableDatabackVersionMock.mockResolvedValue(7);
+    getSchoolMediaStatsMock.mockResolvedValue({
+      approved: 0,
+      pendingReview: 0,
+      rejected: 0,
+      r18: 0,
+      schools: 0,
+      total: 0,
+    });
     bumpServiceReportCountMock.mockResolvedValue(3);
     listPendingMotherFormSyncRecordsMock.mockResolvedValue([]);
     markMotherFormSyncFailureMock.mockResolvedValue(undefined);

@@ -64,6 +64,7 @@ export interface MotherReportPayload {
   databackVersion: number | null;
   reportCount: number;
   reportedAt: string;
+  mediaStats?: SchoolMediaStats;
 }
 
 export interface MotherPushRecord {
@@ -143,4 +144,81 @@ export interface MotherFormSyncResult {
   motherVersion: number;
   updated: boolean;
   recordKey: string;
+}
+
+export type SchoolMediaStatus =
+  | 'uploading'
+  | 'pending_review'
+  | 'approved'
+  | 'rejected';
+
+export interface SchoolMediaTag {
+  id: string;
+  slug: string;
+  label: string;
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SchoolMediaRecord {
+  id: string;
+  objectKey: string;
+  publicUrl: string;
+  mediaType: 'image' | 'video';
+  contentType: string;
+  byteSize: number;
+  fileName: string;
+  schoolName: string;
+  schoolNameNorm: string;
+  schoolAddress: string;
+  province: string;
+  city: string;
+  county: string;
+  isR18: boolean;
+  status: SchoolMediaStatus;
+  reviewNote: string | null;
+  uploadedAt: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tags: SchoolMediaTag[];
+}
+
+export interface SchoolMediaStats {
+  approved: number;
+  pendingReview: number;
+  rejected: number;
+  r18: number;
+  schools: number;
+  total: number;
+}
+
+export interface MotherMediaSyncRecord {
+  byteSize: number;
+  city: string;
+  contentType: string;
+  county: string;
+  fileName: string;
+  id: string;
+  isR18: boolean;
+  mediaType: 'image' | 'video';
+  objectKey: string;
+  province: string;
+  publicUrl: string;
+  schoolAddress: string;
+  schoolName: string;
+  schoolNameNorm: string;
+  tags: Array<{
+    label: string;
+    slug: string;
+    isSystem: boolean;
+  }>;
+  updatedAt: string;
+  uploadedAt: string | null;
+}
+
+export interface MotherMediaSyncResult {
+  mediaId: string;
+  updated: boolean;
 }

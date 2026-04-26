@@ -1,4 +1,4 @@
-import type { MotherReportPayload, MotherReportResult } from '../types';
+import type { MotherMediaSyncResult, MotherReportPayload, MotherReportResult } from '../types';
 import {
   bumpServiceReportCount,
   getNullableDatabackVersion,
@@ -6,6 +6,12 @@ import {
   markMotherFormSyncFailure,
   markMotherFormSyncSuccess,
 } from './data';
+import {
+  getSchoolMediaStats,
+  listPendingMotherMediaSyncRecords,
+  markMotherMediaSyncFailure,
+  markMotherMediaSyncSuccess,
+} from './media';
 import { deriveServiceAuthToken } from './service-auth';
 
 // A warm Worker isolate may serve many requests, so keep the startup report idempotent per isolate.
@@ -35,6 +41,15 @@ function resolveMotherFormSyncUrl(env: Env): string | null {
   }
 
   return new URL('/api/sub/form-records', motherReportUrl).toString();
+}
+
+function resolveMotherMediaSyncUrl(env: Env): string | null {
+  const motherReportUrl = env.MOTHER_REPORT_URL?.trim();
+  if (!motherReportUrl) {
+    return null;
+  }
+
+  return new URL('/api/sub/media-records', motherReportUrl).toString();
 }
 
 function getReportTimeoutMs(env: Env): number {
@@ -105,6 +120,7 @@ export async function reportToMother(
     serviceWatermark: NCT_SUB_SERVICE_WATERMARK,
     serviceUrl,
     databackVersion: await getNullableDatabackVersion(env.DB),
+    mediaStats: await getSchoolMediaStats(env.DB),
     reportCount: await bumpServiceReportCount(env.DB),
     reportedAt: nowIso(),
   };
@@ -142,6 +158,137 @@ export async function reportToMother(
       payload,
       responseCode: null,
       reason: error instanceof Error ? error.message : 'Unknown report error'
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function flushPendingMotherMediaRecords(
+  env: Env,
+  options: {
+    fallbackOrigin?: string;
+  } = {},
+): Promise<{
+  deliveredCount: number;
+  pendingCount: number;
+  reason?: string;
+  responseCode?: number | null;
+  skipped: boolean;
+}> {
+  const motherMediaSyncUrl = resolveMotherMediaSyncUrl(env);
+  if (!motherMediaSyncUrl) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'MOTHER_REPORT_URL is not configured.',
+      skipped: true,
+    };
+  }
+
+  const serviceUrl = resolveServiceUrl(env, options.fallbackOrigin);
+  if (!serviceUrl) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'SERVICE_PUBLIC_URL is not configured and no request origin is available.',
+      skipped: true,
+    };
+  }
+
+  const pendingRecords = await listPendingMotherMediaSyncRecords(
+    env.DB,
+    getFormSyncBatchSize(env),
+  );
+  if (pendingRecords.length === 0) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      skipped: true,
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), getFormSyncTimeoutMs(env));
+
+  try {
+    const response = await fetch(motherMediaSyncUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await deriveServiceAuthToken(serviceUrl)}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        serviceUrl,
+        records: pendingRecords,
+      }),
+      signal: controller.signal,
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      const reason = responseText || `Mother media sync failed with status ${response.status}.`;
+      for (const record of pendingRecords) {
+        await markMotherMediaSyncFailure(env.DB, record.id, reason);
+      }
+
+      return {
+        deliveredCount: 0,
+        pendingCount: pendingRecords.length,
+        reason,
+        responseCode: response.status,
+        skipped: false,
+      };
+    }
+
+    const acceptedPayload = await readAcceptedPayload<{
+      accepted?: unknown;
+      results?: unknown;
+    }>(responseText);
+    const parsedResults = (Array.isArray(acceptedPayload?.results)
+      ? acceptedPayload.results
+      : [])
+      .filter((item): item is MotherMediaSyncResult => (
+        !!item
+        && typeof item === 'object'
+        && typeof (item as { mediaId?: unknown }).mediaId === 'string'
+        && typeof (item as { updated?: unknown }).updated === 'boolean'
+      ));
+    const resultMap = new Map(parsedResults.map((item) => [item.mediaId, item]));
+
+    let deliveredCount = 0;
+    for (const record of pendingRecords) {
+      const result = resultMap.get(record.id);
+      if (result) {
+        await markMotherMediaSyncSuccess(env.DB, result);
+        deliveredCount += 1;
+      } else {
+        await markMotherMediaSyncFailure(
+          env.DB,
+          record.id,
+          'Mother media sync response did not include this media record.',
+        );
+      }
+    }
+
+    return {
+      deliveredCount,
+      pendingCount: Math.max(0, pendingRecords.length - deliveredCount),
+      responseCode: response.status,
+      skipped: false,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Unknown media sync error';
+    for (const record of pendingRecords) {
+      await markMotherMediaSyncFailure(env.DB, record.id, reason);
+    }
+
+    return {
+      deliveredCount: 0,
+      pendingCount: pendingRecords.length,
+      reason,
+      responseCode: null,
+      skipped: false,
     };
   } finally {
     clearTimeout(timeout);

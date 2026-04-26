@@ -91,6 +91,7 @@ const omittedSubmittedFieldNames = new Set([
   'confirmationToken',
   'form_token',
   'g-recaptcha-response',
+  'questionnaire_media_r18',
   'website',
 ]);
 const maxSubmittedFieldTextLength = 8000;

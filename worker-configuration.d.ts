@@ -1,6 +1,13 @@
 interface Env {
   DB: D1Database;
   APP_NAME?: string;
+  B2_APPLICATION_KEY?: string;
+  B2_APPLICATION_KEY_ID?: string;
+  B2_BUCKET_NAME?: string;
+  B2_PUBLIC_BASE_URL?: string;
+  B2_S3_ENDPOINT?: string;
+  B2_ALLOWED_MIME_TYPES?: string;
+  B2_UPLOAD_MAX_BYTES?: string;
   GOOGLE_CLOUD_TRANSLATION_API_KEY?: string;
   SERVICE_PUBLIC_URL?: string;
   NO_TORSION_CORRECTION_FORM_ID?: string;

@@ -18,16 +18,24 @@ import {
 import { translateDetailItems } from './lib/no-torsion-translation';
 import { parseJsonObject, stableStringify, toJsonObject } from './lib/json';
 import {
+  flushPendingMotherMediaRecords,
   flushPendingMotherFormRecords,
   maybeReportOnFirstExecution,
   reportToMother,
 } from './lib/report';
+import {
+  completeMediaUpload,
+  createMediaUpload,
+  listMediaTags,
+  uploadMediaDirect,
+} from './lib/media';
 import { readBearerToken, verifyServiceAuthToken } from './lib/service-auth';
 import {
   NoTorsionStandaloneFormPage,
   NoTorsionStandalonePreviewPage,
   NoTorsionStandaloneResultPage,
 } from './site/no-torsion-form-page';
+import { MediaUploadPage } from './site/media-upload-page';
 
 const DATABACK_EXPORT_RATE_LIMIT_RECORD_KEY = '__system__:databack_export_rate_limit';
 
@@ -471,6 +479,9 @@ async function renderNoTorsionStandaloneFormPage(
 app.get('/', renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_STANDALONE_FORM_PATH, renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_LEGACY_FORM_PATH, renderNoTorsionStandaloneFormPage);
+app.get('/media', (context) => {
+  return context.html(renderToString(MediaUploadPage({})));
+});
 
 async function handleNoTorsionStandaloneFormSubmission(
   context: Context<{ Bindings: Env }>
@@ -650,6 +661,134 @@ app.get('/api/no-torsion/frontend-runtime', async (context) => {
     formProtectionToken: await issueFormProtectionToken(context.env),
     scope
   });
+});
+
+app.get('/api/media/tags', async (context) => {
+  try {
+    return context.json({
+      tags: await listMediaTags(context.env.DB),
+    });
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to list media tags.',
+      },
+      500,
+    );
+  }
+});
+
+app.post('/api/media/uploads/presign', async (context) => {
+  try {
+    return context.json(await createMediaUpload(context.env, await context.req.json()));
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to create media upload.',
+      },
+      400,
+    );
+  }
+});
+
+function getFormString(
+  formData: FormData,
+  key: string,
+): string {
+  const value = formData.get(key);
+  return typeof value === 'string' ? value : '';
+}
+
+function getFormTags(formData: FormData): string[] {
+  const value = getFormString(formData, 'tags');
+  if (!value.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  } catch {
+    // Fall back to comma-separated tags for non-JSON clients.
+  }
+
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isFormFile(value: unknown): value is File {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as { arrayBuffer?: unknown }).arrayBuffer === 'function'
+    && typeof (value as { name?: unknown }).name === 'string'
+    && typeof (value as { size?: unknown }).size === 'number'
+    && typeof (value as { type?: unknown }).type === 'string';
+}
+
+app.post('/api/media/uploads/direct', async (context) => {
+  try {
+    const formData = await context.req.raw.formData();
+    const file = formData.get('file');
+    if (!isFormFile(file)) {
+      throw new Error('Media file is required.');
+    }
+
+    const media = await uploadMediaDirect(context.env, {
+      city: getFormString(formData, 'city'),
+      county: getFormString(formData, 'county'),
+      file,
+      isR18: getFormString(formData, 'isR18'),
+      province: getFormString(formData, 'province'),
+      schoolAddress: getFormString(formData, 'schoolAddress'),
+      schoolName: getFormString(formData, 'schoolName'),
+      tags: getFormTags(formData),
+    });
+    context.executionCtx?.waitUntil(
+      flushPendingMotherMediaRecords(context.env, {
+        fallbackOrigin: new URL(context.req.url).origin,
+      }),
+    );
+
+    return context.json({
+      media,
+    });
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to upload media.',
+      },
+      400,
+    );
+  }
+});
+
+app.post('/api/media/uploads/complete', async (context) => {
+  try {
+    const media = await completeMediaUpload(context.env, await context.req.json());
+    context.executionCtx?.waitUntil(
+      flushPendingMotherMediaRecords(context.env, {
+        fallbackOrigin: new URL(context.req.url).origin,
+      }),
+    );
+
+    return context.json({
+      media,
+    });
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to complete media upload.',
+      },
+      400,
+    );
+  }
 });
 
 app.post('/api/no-torsion/form/prepare', async (context) => {
@@ -859,6 +998,7 @@ export default {
         if (controller.cron === '*/30 * * * *') {
           await reportToMother(env);
         }
+        await flushPendingMotherMediaRecords(env);
         await flushPendingMotherFormRecords(env);
       })()
     );
