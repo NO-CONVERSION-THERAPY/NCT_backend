@@ -6,7 +6,9 @@
   "scripts": {
     "predev": "node scripts/prepare-local-d1.mjs",
     "dev": "wrangler dev --local --port 8791 --persist-to .wrangler/state",
-    "deploy": "wrangler deploy",
+    "cf:ensure": "node scripts/ensure-cloudflare-resources.mjs --migrate DB",
+    "deploy": "npm run cf:ensure && wrangler deploy --keep-vars",
+    "deploy:preview": "npm run cf:ensure && wrangler versions upload",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:jsx": "vitest run src/site/no-torsion-form-page.test.ts",

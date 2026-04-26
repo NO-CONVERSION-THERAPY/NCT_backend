@@ -1,4 +1,4 @@
-name = "nct-api-sql-sub"
+name = "nct-backend"
 main = "src/index.ts"
 compatibility_date = "2026-04-20"
 workers_dev = true
@@ -8,7 +8,7 @@ enabled = true
 
 [[d1_databases]]
 binding = "DB"
-database_name = "nct-api-sql-sub"
+database_name = "nct-backend"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "./migrations"
 

@@ -1,8 +1,8 @@
-# NCT API SQL Sub
+# NCT_backend
 
-`nct-api-sql-sub` 是一个独立的 `Cloudflare Workers + D1 + Hono` 服务。
-建议将它放在 `nct/nct-api-sql-sub` 目录下，作为与 `nct-api-sql` 同级的单独项目运行与部署。
-服务运行时只读取当前项目目录内的 `package.json`、`node_modules`、`wrangler.toml`、`.dev.vars` 和 `migrations`，不会依赖 `nct-api-sql` 目录中的其他文件。
+`NCT_backend` 是一个独立的 `Cloudflare Workers + D1 + Hono` 服务。
+建议将它作为与 `NCT_database` 同级的单独项目运行与部署。
+服务运行时只读取当前项目目录内的 `package.json`、`node_modules`、`wrangler.toml`、`.dev.vars` 和 `migrations`，不会依赖 `NCT_database` 目录中的其他文件。
 
 核心能力：
 
@@ -261,13 +261,13 @@ cp .env.example .dev.vars
 ## 开发
 
 ```bash
-cd nct-api-sql-sub
+cd NCT_backend
 npm install
 cp .env.example .dev.vars
 npm run dev
 ```
 
-如果你当前位于 `nct` 根目录，上面的命令表示进入同级项目 `./nct-api-sql-sub` 后单独启动它，不需要进入 `nct-api-sql` 目录。
+如果你当前位于 `nct` 根目录，上面的命令表示进入同级项目 `./NCT_backend` 后单独启动它，不需要进入 `NCT_database` 目录。
 
 本地默认地址：
 
@@ -276,83 +276,46 @@ npm run dev
 
 ## Cloudflare Workers 部署
 
-本文档示例使用 `https://sub.example.com` 作为子库域名，并假设母库已经部署在 `https://api.example.com`。
+仅推荐使用 Cloudflare Dashboard 的 Workers Builds 网页部署。本项目的 Worker 项目名使用目录名的 Workers 兼容形式：`nct-backend`。
 
-### 1. 登录并创建 D1
+网页部署会读取 [`wrangler.toml`](./wrangler.toml)。部署命令里的 `npm run cf:ensure` 会自动创建 D1 数据库 `nct-backend`、把真实 `database_id` 写入当前构建环境中的 `wrangler.toml`，并执行远端 D1 migrations；不需要再手动创建 D1 或手动填写 `database_id`。
 
-```bash
-npx wrangler login
-npx wrangler whoami
-npm install
-npx wrangler d1 create nct-api-sql-sub
-```
+### Workers Builds 填写
 
-把命令返回的 `database_id` 写回 [`wrangler.toml`](./wrangler.toml)：
+| Cloudflare 页面字段 | 填写值 |
+| --- | --- |
+| Project name | `nct-backend` |
+| Production branch | 你的生产分支，例如 `main` |
+| Path / Root directory | 在本仓库部署填 `NCT_backend`；如果本项目单独成库填 `/` |
+| Build command | `npm run check` |
+| Deploy command | `npm run deploy` |
+| Non-production branch deploy command | `npm run deploy:preview` |
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "nct-api-sql-sub"
-database_id = "替换为线上 D1 database_id"
-migrations_dir = "./migrations"
-```
+### 网页端步骤
 
-### 2. 绑定自定义域名
+1. 进入 Cloudflare Dashboard -> `Workers & Pages` -> `Create` -> `Import a repository`。
+2. 选择 Git 仓库后，按上表填写 `Project name`、`Path`、`Build command`、`Deploy command` 和 `Non-production branch deploy command`。
+3. 在 `Settings` -> `Variables and Secrets` 配置生产变量：
+   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
+   - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
+4. 在 `Settings` -> `Triggers` 确认 Cron 来自 `wrangler.toml`：`*/30 * * * *` 和 `* * * * *`。
+5. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
+6. 推送生产分支触发部署。首次部署时会自动创建 D1、执行 migrations，然后发布 Worker。
 
-建议使用 Workers Custom Domains 绑定 `sub.example.com`。用 `wrangler.toml` 管理时加入：
-
-```toml
-[[routes]]
-pattern = "sub.example.com"
-custom_domain = true
-```
-
-也可以在 Cloudflare Dashboard 的 Worker 设置页中添加 Custom Domain。正式环境如果不想暴露 `*.workers.dev`，把 `workers_dev = false`。
-
-### 3. 设置生产变量
-
-修改 [`wrangler.toml`](./wrangler.toml) 的 `[vars]`：
-
-```toml
-[vars]
-APP_NAME = "NCT API SQL Sub"
-SERVICE_PUBLIC_URL = "https://sub.example.com"
-MOTHER_REPORT_URL = "https://api.example.com/api/sub/report"
-MOTHER_REPORT_TIMEOUT_MS = "10000"
-NO_TORSION_FORM_DRY_RUN = "false"
-NO_TORSION_FORM_SUBMIT_TARGET = "d1"
-NO_TORSION_CORRECTION_SUBMIT_TARGET = "d1"
-```
-
-提交目标可以按实际需要调整：
-
-- `d1`：只写入子库 D1，再由子库回传母库。
-- `google`：只投递 Google Form。
-- `both`：同时写 D1 和 Google Form。
-
-如果启用翻译，设置：
-
-```bash
-npx wrangler secret put GOOGLE_CLOUD_TRANSLATION_API_KEY
-```
-
-如果要覆盖默认 Google Form，也可以把下面这些值放入 `[vars]` 或 Secrets：
+建议生产变量：
 
 ```text
-NO_TORSION_GOOGLE_FORM_URL="https://docs.google.com/forms/d/e/1FAIpQLScolfqJ9dbvJxhjoKYVlmKGwHmy7RiQThutDXpKj7W7jGytfg/viewform?usp=publish-editor"
-NO_TORSION_FORM_ID
-NO_TORSION_CORRECTION_GOOGLE_FORM_URL
-NO_TORSION_CORRECTION_FORM_ID
+APP_NAME=NCT API SQL Sub
+SERVICE_PUBLIC_URL=https://sub.example.com
+MOTHER_REPORT_URL=https://api.example.com/api/sub/report
+MOTHER_REPORT_TIMEOUT_MS=10000
+DATABACK_EXPORT_MIN_INTERVAL_MS=60000
+NO_TORSION_FORM_DRY_RUN=false
+NO_TORSION_FORM_SUBMIT_TARGET=d1
+NO_TORSION_CORRECTION_SUBMIT_TARGET=d1
 ```
 
-### 4. 远端迁移并部署
-
-```bash
-npm run db:migrate:remote
-npm run deploy
-```
-
-部署后访问一次：
+部署后检查：
 
 ```text
 https://sub.example.com/api/health
@@ -360,30 +323,6 @@ https://sub.example.com/form
 ```
 
 Workers 没有部署后启动钩子，所以首次 report 会在第一次实际请求或后续 Cron 中发生。回到母库 `https://api.example.com/Console`，确认子库上报已经被记录。
-
-### 5. Cloudflare Dashboard 网页端部署
-
-如果希望主要在 Cloudflare 网页上完成部署，可以使用 Workers Builds 连接 Git 仓库。网页部署仍会读取本目录的 [`wrangler.toml`](./wrangler.toml)，因此先确认 `name = "nct-api-sql-sub"`、`main = "src/index.ts"`、`compatibility_date`、Cron 和 `DB` 绑定都已提交到仓库；不要把示例里的 `database_id = "00000000-0000-0000-0000-000000000000"` 留在线上配置中。
-
-推荐步骤：
-
-1. 在 Cloudflare Dashboard 进入 `Workers & Pages`，创建或选择名为 `nct-api-sql-sub` 的 Worker。
-2. 打开该 Worker 的 `Settings` -> `Builds`，选择 `Connect`，连接 GitHub / GitLab 仓库。
-3. 构建设置按项目位置填写：
-   - Repository root 如果是整个 `nct` 仓库，Root directory 填 `NCT_backend`；如果本项目是独立仓库，留空或填 `/`。
-   - Production branch 填实际生产分支，例如 `main`。
-   - Build command 填 `npm run check`，用于部署前跑类型检查和测试。
-   - Deploy command 填 `npx wrangler deploy`。
-4. 在 `D1 SQL database` 页面创建数据库 `nct-api-sql-sub`，复制数据库 ID，写回并提交 [`wrangler.toml`](./wrangler.toml) 的 `[[d1_databases]]`；也可以在 Worker 的 `Settings` -> `Bindings` 手动添加 `D1 database` 绑定，变量名必须是 `DB`。
-5. 在 D1 数据库的 `Console` 中按文件名顺序执行 [`migrations`](./migrations) 里的 SQL。更稳妥的方式仍是在本地执行 `npm run db:migrate:remote`，避免漏跑某个 migration。
-6. 在 Worker 的 `Settings` -> `Variables and Secrets` 中添加生产配置：
-   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
-   - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
-7. 在 `Settings` -> `Triggers` 确认 Cron 触发器包含 `*/30 * * * *` 和 `* * * * *`。
-8. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
-9. 推送一个提交触发 Workers Builds。部署成功后访问 `https://sub.example.com/api/health` 和 `https://sub.example.com/form`，再回到母库 Console 确认子库已上报。
-
-Cloudflare 官方参考：[`Workers Builds`](https://developers.cloudflare.com/workers/ci-cd/builds/)、[`D1 Dashboard`](https://developers.cloudflare.com/d1/get-started/)、[`Variables and Secrets`](https://developers.cloudflare.com/workers/configuration/secrets/)、[`Custom Domains`](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)。
 
 ## 测试
 
