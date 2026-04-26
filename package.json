@@ -7,7 +7,6 @@
     "predev": "node scripts/prepare-local-d1.mjs",
     "dev": "wrangler dev --local --port 8791 --persist-to .wrangler/state",
     "deploy": "wrangler deploy",
-    "key:derive-public": "node scripts/derive-public-key.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:jsx": "vitest run src/site/no-torsion-form-page.test.ts",

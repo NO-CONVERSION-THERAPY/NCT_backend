@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   confirmNoTorsionFormSubmissionMock,
@@ -9,6 +9,7 @@ const {
   prepareNoTorsionFormSubmissionMock,
   submitNoTorsionCorrectionMock,
   translateDetailItemsMock,
+  verifyServiceAuthTokenMock,
 } = vi.hoisted(() => ({
   confirmNoTorsionFormSubmissionMock: vi.fn(),
   exportDatabackFileMock: vi.fn(),
@@ -18,10 +19,7 @@ const {
   prepareNoTorsionFormSubmissionMock: vi.fn(),
   submitNoTorsionCorrectionMock: vi.fn(),
   translateDetailItemsMock: vi.fn(),
-}));
-
-const { getMotherServicePublicKeyMock } = vi.hoisted(() => ({
-  getMotherServicePublicKeyMock: vi.fn(),
+  verifyServiceAuthTokenMock: vi.fn(),
 }));
 
 vi.mock('./lib/data', async () => {
@@ -31,7 +29,6 @@ vi.mock('./lib/data', async () => {
     ...actual,
     exportDatabackFile: exportDatabackFileMock,
     getDatabackVersion: getDatabackVersionMock,
-    getMotherServicePublicKey: getMotherServicePublicKeyMock,
     getTableCounts: getTableCountsMock,
   };
 });
@@ -50,6 +47,14 @@ vi.mock('./lib/no-torsion-form', async () => {
 
 vi.mock('./lib/no-torsion-translation', () => ({
   translateDetailItems: translateDetailItemsMock,
+}));
+
+vi.mock('./lib/service-auth', () => ({
+  readBearerToken: (request: Request) =>
+    request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim()
+      || request.headers.get('x-api-token')?.trim()
+      || null,
+  verifyServiceAuthToken: verifyServiceAuthTokenMock,
 }));
 
 const { app } = await import('./index');
@@ -98,7 +103,45 @@ const baseStandaloneValues = {
 function createEnv(overrides: Partial<Env> = {}): Env {
   return {
     DB: {} as D1Database,
+    DATABACK_EXPORT_MIN_INTERVAL_MS: '0',
     ...overrides,
+  };
+}
+
+function createDatabackExportRateLimitDb(payload: Record<string, unknown>) {
+  let storedPayloadJson = JSON.stringify(payload);
+
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...params: unknown[]) {
+          return {
+            first: async () => {
+              if (sql.includes('SELECT payload_json') && sql.includes('FROM nct_form')) {
+                return {
+                  payload_json: storedPayloadJson,
+                };
+              }
+
+              throw new Error(`Unexpected first SQL: ${sql}`);
+            },
+            run: async () => {
+              if (sql.includes('INSERT INTO nct_form')) {
+                storedPayloadJson = String(params[2]);
+                return {
+                  success: true,
+                };
+              }
+
+              throw new Error(`Unexpected run SQL: ${sql}`);
+            },
+          };
+        },
+      };
+    },
+    readStoredPayload() {
+      return JSON.parse(storedPayloadJson) as Record<string, unknown>;
+    },
   };
 }
 
@@ -106,11 +149,15 @@ describe('No-Torsion backend routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDatabackVersionMock.mockResolvedValue(0);
-    getMotherServicePublicKeyMock.mockResolvedValue(null);
     getTableCountsMock.mockResolvedValue({
       nct_databack: 0,
       nct_form: 0,
     });
+    verifyServiceAuthTokenMock.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('issues frontend runtime tokens for public No-Torsion requests', async () => {
@@ -349,20 +396,37 @@ describe('No-Torsion backend routes', () => {
     });
   });
 
-  it('requires a cached mother service public key before exporting databack recovery payloads', async () => {
+  it('rate limits public databack recovery export requests', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-26T00:00:00.000Z'));
+    const db = createDatabackExportRateLimitDb({
+      lastExportAt: '2026-04-26T00:00:00.000Z',
+    });
+
     const response = await app.fetch(
       new Request('https://sub.example.com/api/export/nct_databack'),
-      createEnv(),
+      createEnv({
+        DATABACK_EXPORT_MIN_INTERVAL_MS: '60000',
+        DB: db as unknown as D1Database,
+      }),
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('60');
     expect(await response.json()).toEqual({
-      error: 'Mother service public key is not cached. Run a mother report first.',
+      error: 'Databack export is rate limited.',
+      lastExportAt: '2026-04-26T00:00:00.000Z',
+      retryAfterMs: 60000,
+    });
+    expect(exportDatabackFileMock).not.toHaveBeenCalled();
+    expect(db.readStoredPayload()).toMatchObject({
+      kind: 'databackExportRateLimit',
+      lastRejectReason: 'rate_limited',
+      rejectedCount: 1,
     });
   });
 
-  it('exports databack recovery payloads for signed mother requests', async () => {
-    getMotherServicePublicKeyMock.mockResolvedValue('-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----');
+  it('exports databack recovery payloads with service-url HMAC auth', async () => {
     exportDatabackFileMock.mockResolvedValue({
       afterVersion: 3,
       currentVersion: 7,
@@ -376,21 +440,13 @@ describe('No-Torsion backend routes', () => {
     const response = await app.fetch(
       new Request('https://sub.example.com/api/export/nct_databack?afterVersion=3&limit=99', {
         headers: {
-          'x-nct-auth-alg': 'ECDSA-P256-SHA256',
-          'x-nct-key-id': 'mother-main',
-          'x-nct-timestamp': new Date().toISOString(),
-          'x-nct-nonce': 'nonce',
-          'x-nct-body-sha256': 'hash',
-          'x-nct-signature': 'sig',
+          authorization: 'Bearer rotating-auth-token',
         },
       }),
       createEnv(),
     );
 
-    expect([200, 401]).toContain(response.status);
-    if (response.status === 401) {
-      return;
-    }
+    expect(response.status).toBe(200);
     expect(response.headers.get('content-disposition')).toContain('nct-databack-2026-04-23T12-34-56-000Z.json');
     expect(await response.json()).toEqual({
       afterVersion: 3,
@@ -409,6 +465,10 @@ describe('No-Torsion backend routes', () => {
         limit: 99,
         serviceUrl: 'https://sub.example.com',
       },
+    );
+    expect(verifyServiceAuthTokenMock).toHaveBeenCalledWith(
+      'https://sub.example.com',
+      'rotating-auth-token',
     );
   });
 });

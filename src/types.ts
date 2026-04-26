@@ -15,16 +15,7 @@ export interface AesGcmEncryptedEnvelope {
   ciphertext: string;
 }
 
-export interface RsaOaepEncryptedEnvelope {
-  algorithm: 'RSA-OAEP-SHA-256+A256GCM';
-  encryptedKey: string;
-  iv: string;
-  ciphertext: string;
-}
-
-export type EncryptedEnvelope =
-  | AesGcmEncryptedEnvelope
-  | RsaOaepEncryptedEnvelope;
+export type EncryptedEnvelope = AesGcmEncryptedEnvelope;
 
 export interface SecureTransferPayload {
   keyVersion: number;
@@ -75,19 +66,6 @@ export interface MotherReportPayload {
   reportedAt: string;
 }
 
-export interface MotherReportAcceptedPayload {
-  accepted: boolean;
-  motherServicePublicKey?: string | null;
-  motherServiceEncryptionPublicKey?: string | null;
-}
-
-export interface MotherBootstrapAcceptedPayload {
-  accepted: boolean;
-  encryptedAuthToken: RsaOaepEncryptedEnvelope;
-  motherServicePublicKey?: string | null;
-  motherServiceEncryptionPublicKey?: string | null;
-}
-
 export interface MotherPushRecord {
   recordKey: string;
   version: number;
@@ -129,13 +107,12 @@ export interface MotherReportResult {
   delivered: boolean;
   skipped: boolean;
   reason?: string;
-  motherServicePublicKey?: string | null;
-  motherServiceEncryptionPublicKey?: string | null;
   payload?: MotherReportPayload;
   responseCode?: number | null;
 }
 
 export interface MotherDatabackExportRecord {
+  payload: JsonObject | SecureTransferPayload;
   payloadEncryptionState: 'plain-json' | 'secure-transfer';
   recordKey: string;
   version: number;
@@ -150,13 +127,7 @@ export interface MotherDatabackExportFile {
   currentVersion: number | null;
   exportedAt: string;
   totalRecords: number;
-  encryptedRecords: RsaOaepEncryptedEnvelope;
   records: MotherDatabackExportRecord[];
-}
-
-export interface LocalServiceEncryptionKeyPair {
-  privateKey: string;
-  publicKey: string;
 }
 
 export interface MotherFormSyncRecord {

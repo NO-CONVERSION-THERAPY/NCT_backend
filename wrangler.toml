@@ -17,6 +17,7 @@ APP_NAME = "NCT API SQL Sub"
 SERVICE_PUBLIC_URL = "https://sub.example.com"
 MOTHER_REPORT_URL = "https://api.example.com/api/sub/report"
 MOTHER_REPORT_TIMEOUT_MS = "10000"
+DATABACK_EXPORT_MIN_INTERVAL_MS = "60000"
 
 [triggers]
 crons = ["*/30 * * * *", "* * * * *"]
