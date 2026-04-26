@@ -2,7 +2,6 @@ import type {
   DynamicTableName,
   JsonObject,
   JsonValue,
-  LocalServiceEncryptionKeyPair,
   MotherDatabackExportFile,
   MotherDatabackExportRecord,
   MotherFormSyncRecord,
@@ -13,17 +12,17 @@ import type {
   SecureTransferPayload,
   TableRecord
 } from '../types';
-import {
-  encryptJsonWithPublicKey,
-  generateServiceEncryptionKeyPair,
-  sha256,
-} from './crypto';
+import { sha256 } from './crypto';
 import {
   ensureDynamicColumns,
   extractDynamicColumns,
   serializeDynamicColumnValue
 } from './dynamic-schema';
 import { parseJsonObject, stableStringify, toJsonObject } from './json';
+import {
+  computeRecordContentFingerprint,
+  deriveRecordContentVersion,
+} from './record-version';
 
 type DynamicRow = Record<string, unknown> & {
   id: string;
@@ -50,10 +49,6 @@ type ColumnAssignment = {
 const SYSTEM_RECORD_PREFIX = '__system__:';
 const REPORT_COUNTER_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}report_counter`;
 const MOTHER_SYNC_STATE_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_sync_state`;
-const MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_service_public_key`;
-const MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_service_encryption_public_key`;
-const MOTHER_AUTH_TOKEN_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}mother_auth_token`;
-const LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}local_service_encryption_keypair`;
 const FORM_PROTECTION_SECRET_RECORD_KEY = `${SYSTEM_RECORD_PREFIX}form_protection_secret`;
 const MOTHER_FORM_FAST_RETRY_LIMIT = 5;
 const MOTHER_FORM_FAST_RETRY_DELAY_MS = 60 * 1000;
@@ -206,12 +201,7 @@ function isEncryptedEnvelope(
     return true;
   }
 
-  return (
-    candidate.algorithm === 'RSA-OAEP-SHA-256+A256GCM'
-    && typeof candidate.encryptedKey === 'string'
-    && typeof candidate.iv === 'string'
-    && typeof candidate.ciphertext === 'string'
-  );
+  return false;
 }
 
 function isSecureTransferPayload(value: unknown): value is SecureTransferPayload {
@@ -284,137 +274,6 @@ async function writeSystemRecordPayload(
       receivedAt
     )
     .run();
-}
-
-export async function getMotherServicePublicKey(
-  db: D1Database
-): Promise<string | null> {
-  const payload = await readSystemRecordPayload(db, MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY);
-  if (!payload) {
-    return null;
-  }
-  return typeof payload.publicKey === 'string'
-    ? payload.publicKey.trim() || null
-    : null;
-}
-
-export async function writeMotherServicePublicKey(
-  db: D1Database,
-  publicKey: string
-): Promise<void> {
-  const trimmedPublicKey = publicKey.trim();
-  if (!trimmedPublicKey) {
-    return;
-  }
-
-  await writeSystemRecordPayload(db, MOTHER_SERVICE_PUBLIC_KEY_RECORD_KEY, {
-    kind: 'motherServicePublicKey',
-    publicKey: trimmedPublicKey,
-    updatedAt: nowIso(),
-  });
-}
-
-export async function getMotherServiceEncryptionPublicKey(
-  db: D1Database
-): Promise<string | null> {
-  const payload = await readSystemRecordPayload(
-    db,
-    MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY
-  );
-  if (!payload) {
-    return null;
-  }
-
-  return typeof payload.publicKey === 'string'
-    ? payload.publicKey.trim() || null
-    : null;
-}
-
-export async function writeMotherServiceEncryptionPublicKey(
-  db: D1Database,
-  publicKey: string
-): Promise<void> {
-  const trimmedPublicKey = publicKey.trim();
-  if (!trimmedPublicKey) {
-    return;
-  }
-
-  await writeSystemRecordPayload(db, MOTHER_SERVICE_ENCRYPTION_PUBLIC_KEY_RECORD_KEY, {
-    kind: 'motherServiceEncryptionPublicKey',
-    publicKey: trimmedPublicKey,
-    updatedAt: nowIso(),
-  });
-}
-
-export async function getMotherAuthToken(
-  db: D1Database
-): Promise<string | null> {
-  const payload = await readSystemRecordPayload(db, MOTHER_AUTH_TOKEN_RECORD_KEY);
-  if (!payload) {
-    return null;
-  }
-
-  return typeof payload.token === 'string'
-    ? payload.token.trim() || null
-    : null;
-}
-
-export async function writeMotherAuthToken(
-  db: D1Database,
-  token: string
-): Promise<void> {
-  const trimmedToken = token.trim();
-  if (!trimmedToken) {
-    return;
-  }
-
-  await writeSystemRecordPayload(db, MOTHER_AUTH_TOKEN_RECORD_KEY, {
-    kind: 'motherAuthToken',
-    token: trimmedToken,
-    updatedAt: nowIso(),
-  });
-}
-
-export async function clearMotherAuthToken(
-  db: D1Database
-): Promise<void> {
-  await db
-    .prepare(
-      `
-        DELETE FROM nct_form
-        WHERE record_key = ?
-      `
-    )
-    .bind(MOTHER_AUTH_TOKEN_RECORD_KEY)
-    .run();
-}
-
-export async function getOrCreateLocalServiceEncryptionKeyPair(
-  db: D1Database
-): Promise<LocalServiceEncryptionKeyPair> {
-  const payload = await readSystemRecordPayload(db, LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY);
-  if (
-    payload
-    && typeof payload.privateKey === 'string'
-    && payload.privateKey.trim()
-    && typeof payload.publicKey === 'string'
-    && payload.publicKey.trim()
-  ) {
-    return {
-      privateKey: payload.privateKey,
-      publicKey: payload.publicKey,
-    };
-  }
-
-  const keyPair = await generateServiceEncryptionKeyPair();
-  await writeSystemRecordPayload(db, LOCAL_SERVICE_ENCRYPTION_KEYPAIR_RECORD_KEY, {
-    kind: 'localServiceEncryptionKeyPair',
-    privateKey: keyPair.privateKey,
-    publicKey: keyPair.publicKey,
-    updatedAt: nowIso(),
-  });
-
-  return keyPair;
 }
 
 async function readFormProtectionSecret(db: D1Database): Promise<string | null> {
@@ -661,14 +520,14 @@ export async function writeRecord(
         .run();
     }
   } else {
-    const fingerprint = await sha256(payloadJson);
+    const fingerprint = await computeRecordContentFingerprint(payload);
     const currentVersion = await getDatabackVersion(db);
     const hasChanged = existingRow?.fingerprint !== fingerprint;
     const nextVersion = existingRow
       ? hasChanged
-        ? currentVersion + 1
+        ? deriveRecordContentVersion(currentVersion, fingerprint)
         : Number(existingRow.version ?? 0)
-      : currentVersion + 1;
+      : deriveRecordContentVersion(currentVersion, fingerprint);
 
     if (existingRow) {
       const updateColumns = [
@@ -879,10 +738,6 @@ export async function exportDatabackFile(
 ): Promise<MotherDatabackExportFile> {
   const afterVersion = Math.max(0, Number(options.afterVersion ?? 0));
   const limit = Math.max(1, Math.min(Number(options.limit ?? 100), 500));
-  const motherServiceEncryptionPublicKey = await getMotherServiceEncryptionPublicKey(db);
-  if (!motherServiceEncryptionPublicKey) {
-    throw new Error('Mother service encryption public key is not cached. Bootstrap with mother first.');
-  }
   const result = await db
     .prepare(
       `
@@ -898,9 +753,6 @@ export async function exportDatabackFile(
     .all<DynamicRow>();
 
   const records: MotherDatabackExportRecord[] = [];
-  const encryptedPayloadRecords: Array<MotherDatabackExportRecord & {
-    payload: JsonObject | SecureTransferPayload;
-  }> = [];
   for (const row of result.results ?? []) {
     const payload = parseJsonObject(row.payload_json);
     const payloadCandidate = payload as unknown;
@@ -916,16 +768,9 @@ export async function exportDatabackFile(
     const fingerprint =
       typeof row.fingerprint === 'string'
         ? row.fingerprint
-        : await sha256(stableStringify(payload));
+        : await computeRecordContentFingerprint(payload);
 
     records.push({
-      payloadEncryptionState,
-      recordKey: row.record_key,
-      version: rowVersion,
-      fingerprint,
-      updatedAt
-    });
-    encryptedPayloadRecords.push({
       payload: isSecureTransferPayload(payloadCandidate)
         ? payloadCandidate
         : payload,
@@ -933,7 +778,7 @@ export async function exportDatabackFile(
       recordKey: row.record_key,
       version: rowVersion,
       fingerprint,
-      updatedAt,
+      updatedAt
     });
   }
 
@@ -944,11 +789,7 @@ export async function exportDatabackFile(
     currentVersion: await getNullableDatabackVersion(db),
     exportedAt: nowIso(),
     totalRecords: records.length,
-    encryptedRecords: await encryptJsonWithPublicKey(
-      encryptedPayloadRecords,
-      motherServiceEncryptionPublicKey,
-    ),
-    records
+    records,
   };
 }
 

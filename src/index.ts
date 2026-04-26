@@ -5,7 +5,6 @@ import type { MotherPushRecord } from './types';
 import {
   exportDatabackFile,
   getDatabackVersion,
-  getMotherServicePublicKey,
   getTableCounts,
   importMotherPushRecords,
 } from './lib/data';
@@ -17,18 +16,20 @@ import {
   type NoTorsionConfirmResult
 } from './lib/no-torsion-form';
 import { translateDetailItems } from './lib/no-torsion-translation';
-import { toJsonObject } from './lib/json';
+import { parseJsonObject, stableStringify, toJsonObject } from './lib/json';
 import {
   flushPendingMotherFormRecords,
   maybeReportOnFirstExecution,
   reportToMother,
 } from './lib/report';
-import { assertCachedMotherServiceAuth } from './lib/security';
+import { readBearerToken, verifyServiceAuthToken } from './lib/service-auth';
 import {
   NoTorsionStandaloneFormPage,
   NoTorsionStandalonePreviewPage,
   NoTorsionStandaloneResultPage,
 } from './site/no-torsion-form-page';
+
+const DATABACK_EXPORT_RATE_LIMIT_RECORD_KEY = '__system__:databack_export_rate_limit';
 
 function parseNoTorsionBody(input: unknown): {
   body: Record<string, unknown>;
@@ -135,6 +136,160 @@ function parseMotherPushBody(input: unknown): MotherPushRecord[] {
       version: Math.max(0, Math.trunc(entry.version)),
     };
   });
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function getDatabackExportMinIntervalMs(env: Env): number {
+  return Math.max(
+    0,
+    Number(env.DATABACK_EXPORT_MIN_INTERVAL_MS ?? '60000'),
+  );
+}
+
+function resolveLocalServiceUrl(env: Env, requestUrl: string): string {
+  return env.SERVICE_PUBLIC_URL?.trim() || new URL(requestUrl).origin;
+}
+
+async function assertLocalServiceAuth(
+  context: Context<{ Bindings: Env }>,
+): Promise<Response | null> {
+  const serviceUrl = resolveLocalServiceUrl(context.env, context.req.raw.url);
+  if (
+    await verifyServiceAuthToken(
+      serviceUrl,
+      readBearerToken(context.req.raw),
+    )
+  ) {
+    return null;
+  }
+
+  return context.json(
+    {
+      error: 'Service auth token is invalid.',
+    },
+    401,
+  );
+}
+
+function parseStoredJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    return parseJsonObject(value);
+  } catch (_error) {
+    return {};
+  }
+}
+
+async function writeDatabackExportRateLimitState(
+  db: D1Database,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const updatedAt = nowIso();
+
+  await db.prepare(
+    `
+      INSERT INTO nct_form (
+        id,
+        record_key,
+        payload_json,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(record_key) DO UPDATE SET
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `,
+  )
+    .bind(
+      crypto.randomUUID(),
+      DATABACK_EXPORT_RATE_LIMIT_RECORD_KEY,
+      stableStringify({
+        ...payload,
+        kind: 'databackExportRateLimit',
+        updatedAt,
+      }),
+      updatedAt,
+      updatedAt,
+    )
+    .run();
+}
+
+async function assertDatabackExportRateLimit(
+  context: Context<{ Bindings: Env }>,
+): Promise<Response | null> {
+  const minIntervalMs = getDatabackExportMinIntervalMs(context.env);
+  if (minIntervalMs <= 0) {
+    return null;
+  }
+
+  const nowMs = Date.now();
+  const checkedAt = nowIso();
+  const row = await context.env.DB.prepare(
+    `
+      SELECT payload_json
+      FROM nct_form
+      WHERE record_key = ?
+    `,
+  )
+    .bind(DATABACK_EXPORT_RATE_LIMIT_RECORD_KEY)
+    .first<{ payload_json: string | null }>();
+  const previous = parseStoredJsonObject(row?.payload_json);
+  const lastExportAt =
+    typeof previous.lastExportAt === 'string'
+      ? previous.lastExportAt
+      : null;
+  const lastExportMs = lastExportAt ? Date.parse(lastExportAt) : NaN;
+
+  if (Number.isFinite(lastExportMs)) {
+    const elapsedMs = nowMs - lastExportMs;
+    if (elapsedMs < minIntervalMs) {
+      const retryAfterMs = Math.max(0, minIntervalMs - elapsedMs);
+      const rejectedCount = Math.max(
+        0,
+        Number(previous.rejectedCount ?? 0),
+      ) + 1;
+
+      await writeDatabackExportRateLimitState(context.env.DB, {
+        ...previous,
+        lastRejectedAt: checkedAt,
+        lastRejectReason: 'rate_limited',
+        rejectedCount,
+      });
+      console.warn(
+        `Databack export rate limited: retryAfterMs=${retryAfterMs}, rejectedCount=${rejectedCount}`,
+      );
+
+      return new Response(
+        JSON.stringify({
+          error: 'Databack export is rate limited.',
+          lastExportAt,
+          retryAfterMs,
+        }),
+        {
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'retry-after': String(Math.ceil(retryAfterMs / 1000)),
+          },
+          status: 429,
+        },
+      );
+    }
+  }
+
+  await writeDatabackExportRateLimitState(context.env.DB, {
+    ...previous,
+    lastExportAt: checkedAt,
+    lastRequestUrl: context.req.raw.url,
+  });
+
+  return null;
 }
 
 function buildNoTorsionErrorResponse(
@@ -290,43 +445,10 @@ app.use(
       'content-type',
       'authorization',
       'x-api-token',
-      'x-nct-auth-alg',
-      'x-nct-key-id',
-      'x-nct-timestamp',
-      'x-nct-nonce',
-      'x-nct-body-sha256',
-      'x-nct-signature',
     ],
     allowMethods: ['GET', 'POST', 'OPTIONS']
   })
 );
-
-app.get('/', async (context) => {
-  const [counts, currentDatabackVersion] = await Promise.all([
-    getTableCounts(context.env.DB),
-    getDatabackVersion(context.env.DB)
-  ]);
-
-  return context.json({
-    app: context.env.APP_NAME ?? 'NCT API SQL Sub',
-    serviceUrl: context.env.SERVICE_PUBLIC_URL ?? new URL(context.req.url).origin,
-    status: 'ok',
-    tables: counts,
-    databackVersion: currentDatabackVersion,
-    routes: {
-      health: '/api/health',
-      noTorsionFormPage: NO_TORSION_STANDALONE_FORM_PATH,
-      noTorsionFormPageLegacy: NO_TORSION_LEGACY_FORM_PATH,
-      noTorsionFrontendRuntime: '/api/no-torsion/frontend-runtime',
-      noTorsionFormPrepare: '/api/no-torsion/form/prepare',
-      noTorsionFormConfirm: '/api/no-torsion/form/confirm',
-      noTorsionCorrectionSubmit: '/api/no-torsion/correction/submit',
-      noTorsionTranslateText: '/api/no-torsion/translate-text',
-      exportDataback: '/api/export/nct_databack',
-      motherReport: context.env.MOTHER_REPORT_URL ?? null,
-    }
-  });
-});
 
 async function renderNoTorsionStandaloneFormPage(
   context: Context<{ Bindings: Env }>
@@ -344,7 +466,9 @@ async function renderNoTorsionStandaloneFormPage(
   );
 }
 
-// Keep the legacy `/no-torsion/form` entrypoints alive while frontend traffic finishes migrating to `/form`.
+// Keep `/form` and the legacy `/no-torsion/form` entrypoints alive while making
+// the service root useful when opened directly after startup.
+app.get('/', renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_STANDALONE_FORM_PATH, renderNoTorsionStandaloneFormPage);
 app.get(NO_TORSION_LEGACY_FORM_PATH, renderNoTorsionStandaloneFormPage);
 
@@ -655,11 +779,7 @@ app.post('/api/no-torsion/translate-text', async (context) => {
 });
 
 app.post('/api/push/secure-records', async (context) => {
-  const authError = await assertCachedMotherServiceAuth(
-    context,
-    context.env,
-    await getMotherServicePublicKey(context.env.DB)
-  );
+  const authError = await assertLocalServiceAuth(context);
   if (authError) {
     return authError;
   }
@@ -685,13 +805,14 @@ app.post('/api/push/secure-records', async (context) => {
 });
 
 app.get('/api/export/nct_databack', async (context) => {
-  const authError = await assertCachedMotherServiceAuth(
-    context,
-    context.env,
-    await getMotherServicePublicKey(context.env.DB)
-  );
+  const authError = await assertLocalServiceAuth(context);
   if (authError) {
     return authError;
+  }
+
+  const rateLimitError = await assertDatabackExportRateLimit(context);
+  if (rateLimitError) {
+    return rateLimitError;
   }
 
   const afterVersion = Math.max(0, Number(context.req.query('afterVersion') ?? '0'));
@@ -699,7 +820,7 @@ app.get('/api/export/nct_databack', async (context) => {
   const payload = await exportDatabackFile(context.env.DB, context.env, {
     afterVersion,
     limit,
-    serviceUrl: context.env.SERVICE_PUBLIC_URL ?? new URL(context.req.url).origin
+    serviceUrl: resolveLocalServiceUrl(context.env, context.req.url)
   });
   const timestamp = payload.exportedAt.replaceAll(/[:.]/g, '-');
 

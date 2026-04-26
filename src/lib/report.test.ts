@@ -2,57 +2,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   bumpServiceReportCountMock,
-  clearMotherAuthTokenMock,
-  getMotherAuthTokenMock,
-  getMotherServicePublicKeyMock,
-  getOrCreateLocalServiceEncryptionKeyPairMock,
   getNullableDatabackVersionMock,
+  hmacSha256Mock,
   listPendingMotherFormSyncRecordsMock,
   markMotherFormSyncFailureMock,
   markMotherFormSyncSuccessMock,
-  writeMotherServicePublicKeyMock,
-  writeMotherAuthTokenMock,
-  writeMotherServiceEncryptionPublicKeyMock,
+  sha256Mock,
 } =
   vi.hoisted(() => ({
     bumpServiceReportCountMock: vi.fn(),
-    clearMotherAuthTokenMock: vi.fn(),
-    getMotherAuthTokenMock: vi.fn(),
-    getMotherServicePublicKeyMock: vi.fn(),
-    getOrCreateLocalServiceEncryptionKeyPairMock: vi.fn(),
     getNullableDatabackVersionMock: vi.fn(),
+    hmacSha256Mock: vi.fn(),
     listPendingMotherFormSyncRecordsMock: vi.fn(),
     markMotherFormSyncFailureMock: vi.fn(),
     markMotherFormSyncSuccessMock: vi.fn(),
-    writeMotherServicePublicKeyMock: vi.fn(),
-    writeMotherAuthTokenMock: vi.fn(),
-    writeMotherServiceEncryptionPublicKeyMock: vi.fn(),
+    sha256Mock: vi.fn(),
   }));
 
 vi.mock('./data', () => ({
   bumpServiceReportCount: bumpServiceReportCountMock,
-  clearMotherAuthToken: clearMotherAuthTokenMock,
-  getMotherAuthToken: getMotherAuthTokenMock,
-  getMotherServicePublicKey: getMotherServicePublicKeyMock,
-  getOrCreateLocalServiceEncryptionKeyPair: getOrCreateLocalServiceEncryptionKeyPairMock,
   getNullableDatabackVersion: getNullableDatabackVersionMock,
   listPendingMotherFormSyncRecords: listPendingMotherFormSyncRecordsMock,
   markMotherFormSyncFailure: markMotherFormSyncFailureMock,
   markMotherFormSyncSuccess: markMotherFormSyncSuccessMock,
-  writeMotherServicePublicKey: writeMotherServicePublicKeyMock,
-  writeMotherAuthToken: writeMotherAuthTokenMock,
-  writeMotherServiceEncryptionPublicKey: writeMotherServiceEncryptionPublicKeyMock,
-}));
-
-vi.mock('./security', () => ({
-  unwrapSignedPayloadEnvelope: vi.fn(async (_env: Env, input: unknown) => input),
 }));
 
 vi.mock('./crypto', () => ({
-  decryptJsonWithPrivateKey: vi.fn(async () => ({ token: 'bootstrapped-token' })),
+  hmacSha256: hmacSha256Mock,
+  sha256: sha256Mock,
 }));
 
-import { reportToMother, syncFromMother } from './report';
+import {
+  flushPendingMotherFormRecords,
+  reportToMother,
+  syncFromMother,
+} from './report';
 
 describe('reportToMother', () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -61,23 +45,17 @@ describe('reportToMother', () => {
     vi.stubGlobal('fetch', fetchMock);
     getNullableDatabackVersionMock.mockResolvedValue(7);
     bumpServiceReportCountMock.mockResolvedValue(3);
-    getMotherAuthTokenMock.mockResolvedValue('auth-token');
-    getMotherServicePublicKeyMock.mockResolvedValue(null);
-    getOrCreateLocalServiceEncryptionKeyPairMock.mockResolvedValue({
-      privateKey: '-----BEGIN PRIVATE KEY-----\nsub\n-----END PRIVATE KEY-----',
-      publicKey: '-----BEGIN PUBLIC KEY-----\nsub\n-----END PUBLIC KEY-----',
-    });
     listPendingMotherFormSyncRecordsMock.mockResolvedValue([]);
     markMotherFormSyncFailureMock.mockResolvedValue(undefined);
     markMotherFormSyncSuccessMock.mockResolvedValue(undefined);
-    clearMotherAuthTokenMock.mockResolvedValue(undefined);
-    writeMotherServicePublicKeyMock.mockResolvedValue(undefined);
-    writeMotherAuthTokenMock.mockResolvedValue(undefined);
-    writeMotherServiceEncryptionPublicKeyMock.mockResolvedValue(undefined);
+    hmacSha256Mock.mockResolvedValue('rotating-auth-token');
+    sha256Mock.mockImplementation(async (value: string) => `sha256:${value}`);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   it('skips reporting when the mother report URL is not configured', async () => {
@@ -112,7 +90,7 @@ describe('reportToMother', () => {
     expect(bumpServiceReportCountMock).not.toHaveBeenCalled();
   });
 
-  it('posts report payloads with bearer-token auth', async () => {
+  it('posts report payloads with service-url HMAC bearer auth', async () => {
     fetchMock.mockResolvedValue(
       new Response(null, {
         status: 202,
@@ -146,7 +124,7 @@ describe('reportToMother', () => {
     expect(url).toBe('https://mother.example.com/api/sub/report');
     expect(init.method).toBe('POST');
     expect(init.headers).toEqual({
-      authorization: 'Bearer auth-token',
+      authorization: 'Bearer rotating-auth-token',
       'content-type': 'application/json',
     });
 
@@ -167,35 +145,32 @@ describe('reportToMother', () => {
       reportCount: 3,
     });
     expect(payload.reportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(writeMotherServicePublicKeyMock).not.toHaveBeenCalled();
   });
 
-  it('caches the mother service public key returned by recognized mother reports', async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          accepted: true,
-          motherServicePublicKey: '-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----',
-        }),
-        {
-          status: 202,
-        },
-      ),
-    );
+  it('derives the report token directly from the service URL without bootstrap', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-26T00:00:10.000Z'));
+    fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
 
     const result = await reportToMother({
       DB: {} as D1Database,
+      APP_NAME: 'Sub App',
       MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
       SERVICE_PUBLIC_URL: 'https://sub.example.com',
     } as Env);
 
-    expect(result).toMatchObject({
-      delivered: true,
-      motherServicePublicKey: '-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----',
-    });
-    expect(writeMotherServicePublicKeyMock).toHaveBeenCalledWith(
-      expect.anything(),
-      '-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----',
+    expect(result.delivered).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://mother.example.com/api/sub/report',
+    );
+    expect(hmacSha256Mock).toHaveBeenCalledWith(
+      [
+        'NCT-MOTHER-AUTH-HMAC-SHA256-T30-V1',
+        'https://sub.example.com',
+        String(Math.floor(new Date('2026-04-26T00:00:10.000Z').getTime() / 30000)),
+      ].join('\n'),
+      'https://sub.example.com',
     );
   });
 
@@ -236,6 +211,104 @@ describe('reportToMother', () => {
       responseCode: null,
       reason: 'socket hang up',
     });
+  });
+});
+
+describe('flushPendingMotherFormRecords', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    markMotherFormSyncFailureMock.mockResolvedValue(undefined);
+    markMotherFormSyncSuccessMock.mockResolvedValue(undefined);
+    hmacSha256Mock.mockResolvedValue('rotating-auth-token');
+    sha256Mock.mockImplementation(async (value: string) => `sha256:${value}`);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('posts full form payloads so future questionnaire fields reach the mother service', async () => {
+    listPendingMotherFormSyncRecordsMock.mockResolvedValue([
+      {
+        databackFingerprint: 'fp-1',
+        databackVersion: 12,
+        payload: {
+          name: '测试机构',
+          schoolName: '测试机构',
+          submittedFields: {
+            future_question: '未来新增答案',
+            future_multi: ['第一项', '第二项'],
+          },
+        },
+        recordKey: 'form:future-field',
+        updatedAt: '2026-04-24T12:00:00.000Z',
+      },
+    ]);
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          results: [
+            {
+              databackFingerprint: 'fp-1',
+              motherVersion: 25,
+              recordKey: 'form:future-field',
+              updated: true,
+            },
+          ],
+        }),
+        { status: 202 },
+      ),
+    );
+
+    const result = await flushPendingMotherFormRecords({
+      DB: {} as D1Database,
+      MOTHER_REPORT_URL: 'https://mother.example.com/api/sub/report',
+      SERVICE_PUBLIC_URL: 'https://sub.example.com',
+    } as Env);
+
+    expect(result).toMatchObject({
+      deliveredCount: 1,
+      pendingCount: 0,
+      responseCode: 202,
+      skipped: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://mother.example.com/api/sub/form-records');
+    expect(init.headers).toEqual({
+      authorization: 'Bearer rotating-auth-token',
+      'content-type': 'application/json',
+    });
+
+    const body = JSON.parse(String(init.body)) as {
+      records: Array<{
+        payload: {
+          submittedFields?: Record<string, unknown>;
+        };
+      }>;
+      serviceUrl: string;
+    };
+
+    expect(body.serviceUrl).toBe('https://sub.example.com');
+    expect(body.records[0]?.payload.submittedFields).toEqual({
+      future_question: '未来新增答案',
+      future_multi: ['第一项', '第二项'],
+    });
+    expect(markMotherFormSyncSuccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        databackFingerprint: 'fp-1',
+        motherVersion: 25,
+        recordKey: 'form:future-field',
+        updated: true,
+      },
+    );
+    expect(markMotherFormSyncFailureMock).not.toHaveBeenCalled();
   });
 });
 

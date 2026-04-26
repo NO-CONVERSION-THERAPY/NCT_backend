@@ -1,8 +1,8 @@
-# NCT API SQL Sub
+# NCT_backend
 
-`nct-api-sql-sub` 是一个独立的 `Cloudflare Workers + D1 + Hono` 服务。
-建议将它放在 `nct/nct-api-sql-sub` 目录下，作为与 `nct-api-sql` 同级的单独项目运行与部署。
-服务运行时只读取当前项目目录内的 `package.json`、`node_modules`、`wrangler.toml`、`.dev.vars` 和 `migrations`，不会依赖 `nct-api-sql` 目录中的其他文件。
+`NCT_backend` 是一个独立的 `Cloudflare Workers + D1 + Hono` 服务。
+建议将它作为与 `NCT_database` 同级的单独项目运行与部署。
+服务运行时只读取当前项目目录内的 `package.json`、`node_modules`、`wrangler.toml`、`.dev.vars` 和 `migrations`，不会依赖 `NCT_database` 目录中的其他文件。
 
 核心能力：
 
@@ -10,10 +10,10 @@
 - 表字段按传入 JSON 顶层字段自动扩列
 - 作为 `No-Torsion` 的后端服务，承接表单、机构修正、翻译与前端运行时保护 token
 - 直接输出 `Hono + JSX` 的独立表单、确认页与结果页
-- 定时从母库 `nct-api-sql` 拉取公开的 secure records 并写入 `nct_databack`
+- 接收母库 `nct-api-sql` 推送的公开 secure records 并写入 `nct_databack`
 - 按母库请求把 `nct_databack` 导出成附件文件并回传给母库
 - 服务首次执行时向母库报告一次
-- 之后每 30 分钟执行一次“拉取母库 + 上报自身状态”
+- 之后每 30 分钟向母库上报自身状态，每分钟尝试回传待同步表单记录
 
 ## 表结构
 
@@ -80,7 +80,8 @@
 
 ### `GET /`
 
-返回服务状态、当前 `nct_databack` 版本号和主要路由信息。
+直接输出独立 Hono JSX 表单页。
+适合本地启动后直接打开 Worker 根地址填写问卷。
 
 ### `GET /api/health`
 
@@ -90,7 +91,7 @@
 正常数据流改为：
 
 - `No-Torsion` 前端通过 `/api/no-torsion/*` 走业务接口
-- 子库自己定时从母库拉取 `GET /api/public/secure-records`
+- 母库把公开的 secure records 推送到子库 `POST /api/push/secure-records`
 - 母库只在灾备时访问 `GET /api/export/nct_databack`
 
 ### `GET /api/no-torsion/frontend-runtime`
@@ -156,7 +157,8 @@
 
 - 如果记录本身已经是母库推送来的 secure payload，会原样回传
 - 如果记录是子库本地写入的普通 JSON，会原样回传；母库收到后再按自己的 `ENCRYPTION_KEY` 重新生成 t2
-- 母库灾备回拉这个接口时，必须带可被子库已缓存母库公钥验签通过的 `x-nct-*` ECDSA 请求签名
+- 这个导出接口要求母库带 `Authorization: Bearer <30秒HMAC>`；双方用子库 `serviceUrl` 派生短期 token，导出包本身明文返回
+- 子库会对这个接口做频次限制，默认 `DATABACK_EXPORT_MIN_INTERVAL_MS=60000`
 
 ## 母库上报
 
@@ -197,7 +199,7 @@ cp .env.example .dev.vars
 生产部署还需要确认这些前提：
 
 - 子库现在不再要求额外配置母库公钥、旧 token 或本地导出加密密钥
-- 子库会在首次成功上报母库后，把母库返回的签名公钥缓存到 `nct_form` 系统记录里
+- 子库和母库之间所有请求都用 `SERVICE_PUBLIC_URL` / `serviceUrl` 派生的 30 秒 HMAC Bearer token 验证
 
 如果同时作为 `No-Torsion` 后端并希望真实落库，而不是只停留在预览页，建议明确设置：
 
@@ -217,7 +219,7 @@ cp .env.example .dev.vars
 
 - `APP_NAME`
 - `MOTHER_REPORT_TIMEOUT_MS`
-- `SERVICE_AUTH_MAX_SKEW_MS`
+- `DATABACK_EXPORT_MIN_INTERVAL_MS`
 - `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_FORM_ID`
 - `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_FORM_ID`
 - `NO_TORSION_SITE_URL`
@@ -227,10 +229,12 @@ cp .env.example .dev.vars
 其中：
 
 - `APP_NAME` 不填时默认使用 `NCT API SQL Sub`
-- 子库上报时会带上 `serviceWatermark: "nct-api-sql-sub:v1"`；母库识别为子库后，会在上报响应中返回自己的签名公钥，子库会保存到 `__system__:mother_service_public_key`
-- 缓存的母库签名公钥只用于两件事：验签母库返回的 `secure-records` payload envelope，以及验签母库灾备回拉 `GET /api/export/nct_databack` 的请求头
+- 子库上报时会带上 `serviceWatermark: "nct-api-sql-sub:v1"`；母库用它确认协议类型，但真正认证靠 30 秒 HMAC
+- `SERVICE_PUBLIC_URL` 必须稳定；它既是子库登记 URL，也是上报、表单回传、母库推送和灾备回拉的 HMAC seed
+- `nct_databack` 传输本身不再加密；请求身份通过 HMAC Bearer token 验证
 - 子库本地普通 JSON 回传给母库时不再额外做字段加密，也不再需要 `DEFAULT_ENCRYPT_FIELDS`、`ENCRYPTION_KEY`、`ENCRYPTION_KEY_VERSION`
 - `No-Torsion` 现在只支持 `NO_TORSION_*` 变量名；旧 `FORM_*` / `CORRECTION_*` 兼容别名已删除
+- `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` 可以填写完整 Google Form 链接，支持 `/forms/d/<id>`、`/forms/d/<id>/viewform`、`/forms/d/<id>/prefill`、`/forms/d/e/<id>/viewform` 和 `/formResponse` 形态；`NO_TORSION_FORM_ID` / `NO_TORSION_CORRECTION_FORM_ID` 可以填写 raw form ID
 - 表单保护 secret 不再通过环境变量输入；服务首次发放表单 token 时会自动生成并保存到 D1 的 `__system__:form_protection_secret`
 
 当 `No-Torsion` 接入本服务时：
@@ -242,7 +246,7 @@ cp .env.example .dev.vars
 
 - Cloudflare Workers 没有真正的“部署后立即启动钩子”
 - 因此这里的“第一次启动报告”实现为“首次实际执行时报告一次”
-- 之后通过 Cron `*/30 * * * *` 每 30 分钟执行一次“从母库拉取公开 secure records + 向母库报告自身状态”
+- 之后通过 Cron `*/30 * * * *` 每 30 分钟向母库报告自身状态，并通过 `* * * * *` 每分钟尝试回传待同步表单记录
 
 本地开发默认在 `.dev.vars` 中把 `MOTHER_REPORT_URL` 设为空，因此手动或定时上报会返回：
 
@@ -257,18 +261,68 @@ cp .env.example .dev.vars
 ## 开发
 
 ```bash
-cd nct-api-sql-sub
+cd NCT_backend
 npm install
 cp .env.example .dev.vars
 npm run dev
 ```
 
-如果你当前位于 `nct` 根目录，上面的命令表示进入同级项目 `./nct-api-sql-sub` 后单独启动它，不需要进入 `nct-api-sql` 目录。
+如果你当前位于 `nct` 根目录，上面的命令表示进入同级项目 `./NCT_backend` 后单独启动它，不需要进入 `NCT_database` 目录。
 
 本地默认地址：
 
 - Worker: `http://127.0.0.1:8791`
 - 健康检查: `http://127.0.0.1:8791/api/health`
+
+## Cloudflare Workers 部署
+
+仅推荐使用 Cloudflare Dashboard 的 Workers Builds 网页部署。本项目的 Worker 项目名使用目录名的 Workers 兼容形式：`nct-backend`。
+
+网页部署会读取 [`wrangler.toml`](./wrangler.toml)。部署命令里的 `npm run cf:ensure` 会自动创建 D1 数据库 `nct-backend`、把真实 `database_id` 写入当前构建环境中的 `wrangler.toml`，并执行远端 D1 migrations；不需要再手动创建 D1 或手动填写 `database_id`。
+
+### Workers Builds 填写
+
+| Cloudflare 页面字段 | 填写值 |
+| --- | --- |
+| Project name | `nct-backend` |
+| Production branch | 你的生产分支，例如 `main` |
+| Path / Root directory | 在本仓库部署填 `NCT_backend`；如果本项目单独成库填 `/` |
+| Build command | `npm run check` |
+| Deploy command | `npm run deploy` |
+| Non-production branch deploy command | `npm run deploy:preview` |
+
+### 网页端步骤
+
+1. 进入 Cloudflare Dashboard -> `Workers & Pages` -> `Create` -> `Import a repository`。
+2. 选择 Git 仓库后，按上表填写 `Project name`、`Path`、`Build command`、`Deploy command` 和 `Non-production branch deploy command`。
+3. 在 `Settings` -> `Variables and Secrets` 配置生产变量：
+   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
+   - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
+4. 在 `Settings` -> `Triggers` 确认 Cron 来自 `wrangler.toml`：`*/30 * * * *` 和 `* * * * *`。
+5. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
+6. 推送生产分支触发部署。首次部署时会自动创建 D1、执行 migrations，然后发布 Worker。
+
+建议生产变量：
+
+```text
+APP_NAME=NCT API SQL Sub
+SERVICE_PUBLIC_URL=https://sub.example.com
+MOTHER_REPORT_URL=https://api.example.com/api/sub/report
+MOTHER_REPORT_TIMEOUT_MS=10000
+DATABACK_EXPORT_MIN_INTERVAL_MS=60000
+NO_TORSION_FORM_DRY_RUN=false
+NO_TORSION_FORM_SUBMIT_TARGET=d1
+NO_TORSION_CORRECTION_SUBMIT_TARGET=d1
+```
+
+部署后检查：
+
+```text
+https://sub.example.com/api/health
+https://sub.example.com/form
+```
+
+Workers 没有部署后启动钩子，所以首次 report 会在第一次实际请求或后续 Cron 中发生。回到母库 `https://api.example.com/Console`，确认子库上报已经被记录。
 
 ## 测试
 

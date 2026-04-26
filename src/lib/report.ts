@@ -1,25 +1,12 @@
-import type {
-  MotherBootstrapAcceptedPayload,
-  MotherReportAcceptedPayload,
-  MotherReportPayload,
-  MotherReportResult,
-} from '../types';
+import type { MotherReportPayload, MotherReportResult } from '../types';
 import {
   bumpServiceReportCount,
-  clearMotherAuthToken,
-  getMotherAuthToken,
-  getMotherServicePublicKey,
-  getOrCreateLocalServiceEncryptionKeyPair,
   getNullableDatabackVersion,
   listPendingMotherFormSyncRecords,
   markMotherFormSyncFailure,
   markMotherFormSyncSuccess,
-  writeMotherAuthToken,
-  writeMotherServiceEncryptionPublicKey,
-  writeMotherServicePublicKey,
 } from './data';
-import { decryptJsonWithPrivateKey } from './crypto';
-import { unwrapSignedPayloadEnvelope } from './security';
+import { deriveServiceAuthToken } from './service-auth';
 
 // A warm Worker isolate may serve many requests, so keep the startup report idempotent per isolate.
 let startupReportTriggered = false;
@@ -39,20 +26,6 @@ function resolveServiceUrl(
   }
 
   return fallbackOrigin?.trim() || null;
-}
-
-function resolveMotherBootstrapUrl(env: Env): string | null {
-  const configured = env.MOTHER_BOOTSTRAP_URL?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  const motherReportUrl = env.MOTHER_REPORT_URL?.trim();
-  if (!motherReportUrl) {
-    return null;
-  }
-
-  return new URL('/api/sub/bootstrap', motherReportUrl).toString();
 }
 
 function resolveMotherFormSyncUrl(env: Env): string | null {
@@ -85,170 +58,20 @@ function getFormSyncTimeoutMs(env: Env): number {
   );
 }
 
-async function readAcceptedPayload<T>(
-  env: Env,
-  db: D1Database,
+function readAcceptedPayload<T>(
   responseText: string
-): Promise<T | null> {
+): T | null {
   const trimmed = responseText.trim();
   if (!trimmed) {
     return null;
   }
 
-  const unwrapped = await unwrapSignedPayloadEnvelope(
-    env,
-    JSON.parse(trimmed),
-    {
-      publicKey: await getMotherServicePublicKey(db),
-    }
-  );
-  if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) {
+  const parsed = JSON.parse(trimmed);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return null;
   }
 
-  return unwrapped as T;
-}
-
-async function cacheMotherKeys(
-  env: Env,
-  payload: {
-    motherServiceEncryptionPublicKey?: string | null;
-    motherServicePublicKey?: string | null;
-  } | null
-): Promise<void> {
-  if (!payload) {
-    return;
-  }
-
-  if (typeof payload.motherServicePublicKey === 'string' && payload.motherServicePublicKey.trim()) {
-    await writeMotherServicePublicKey(env.DB, payload.motherServicePublicKey);
-  }
-  if (
-    typeof payload.motherServiceEncryptionPublicKey === 'string'
-    && payload.motherServiceEncryptionPublicKey.trim()
-  ) {
-    await writeMotherServiceEncryptionPublicKey(
-      env.DB,
-      payload.motherServiceEncryptionPublicKey
-    );
-  }
-}
-
-async function bootstrapWithMother(
-  env: Env,
-  options: {
-    fallbackOrigin?: string;
-  } = {}
-): Promise<{
-  motherServiceEncryptionPublicKey?: string | null;
-  motherServicePublicKey?: string | null;
-  reason?: string;
-  responseCode?: number | null;
-  token?: string;
-}> {
-  const bootstrapUrl = resolveMotherBootstrapUrl(env);
-  if (!bootstrapUrl) {
-    return {
-      reason: 'MOTHER_BOOTSTRAP_URL or MOTHER_REPORT_URL is not configured.',
-      responseCode: null,
-    };
-  }
-
-  const serviceUrl = resolveServiceUrl(env, options.fallbackOrigin);
-  if (!serviceUrl) {
-    return {
-      reason: 'SERVICE_PUBLIC_URL is not configured and no request origin is available.',
-      responseCode: null,
-    };
-  }
-
-  const keyPair = await getOrCreateLocalServiceEncryptionKeyPair(env.DB);
-  const body = JSON.stringify({
-    service: env.APP_NAME ?? 'NCT API SQL Sub',
-    serviceWatermark: NCT_SUB_SERVICE_WATERMARK,
-    serviceUrl,
-    subServiceEncryptionPublicKey: keyPair.publicKey,
-    reportedAt: nowIso(),
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), getReportTimeoutMs(env));
-
-  try {
-    const response = await fetch(bootstrapUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      body,
-      signal: controller.signal,
-    });
-    const responseText = await response.text();
-    const acceptedPayload = response.ok
-      ? await readAcceptedPayload<MotherBootstrapAcceptedPayload>(env, env.DB, responseText)
-      : null;
-
-    if (!response.ok || !acceptedPayload?.accepted || !acceptedPayload.encryptedAuthToken) {
-      return {
-        reason: response.ok
-          ? 'Mother bootstrap response is missing an encrypted auth token.'
-          : responseText || `Bootstrap failed with status ${response.status}.`,
-        responseCode: response.status,
-      };
-    }
-
-    await cacheMotherKeys(env, acceptedPayload);
-    const decryptedTokenPayload = await decryptJsonWithPrivateKey<{ token?: unknown }>(
-      acceptedPayload.encryptedAuthToken,
-      keyPair.privateKey,
-    );
-    const token =
-      decryptedTokenPayload && typeof decryptedTokenPayload === 'object' && typeof decryptedTokenPayload.token === 'string'
-        ? decryptedTokenPayload.token.trim()
-        : '';
-    if (!token) {
-      return {
-        reason: 'Mother bootstrap response did not contain a usable auth token.',
-        responseCode: response.status,
-      };
-    }
-
-    await writeMotherAuthToken(env.DB, token);
-    return {
-      motherServiceEncryptionPublicKey: acceptedPayload.motherServiceEncryptionPublicKey ?? null,
-      motherServicePublicKey: acceptedPayload.motherServicePublicKey ?? null,
-      responseCode: response.status,
-      token,
-    };
-  } catch (error) {
-    return {
-      reason: error instanceof Error ? error.message : 'Unknown bootstrap error',
-      responseCode: null,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function ensureMotherAuthToken(
-  env: Env,
-  options: {
-    fallbackOrigin?: string;
-  } = {}
-): Promise<{
-  reason?: string;
-  token?: string;
-}> {
-  const cachedToken = await getMotherAuthToken(env.DB);
-  if (cachedToken) {
-    return {
-      token: cachedToken,
-    };
-  }
-
-  const bootstrap = await bootstrapWithMother(env, options);
-  return bootstrap.token
-    ? { token: bootstrap.token }
-    : { reason: bootstrap.reason ?? 'Mother bootstrap failed.' };
+  return parsed as T;
 }
 
 export async function reportToMother(
@@ -277,16 +100,6 @@ export async function reportToMother(
     };
   }
 
-  const authToken = await ensureMotherAuthToken(env, options);
-  if (!authToken.token) {
-    return {
-      delivered: false,
-      skipped: false,
-      reason: authToken.reason ?? 'Mother auth bootstrap failed.',
-      responseCode: null,
-    };
-  }
-
   const payload = options.payloadOverride ?? {
     service: env.APP_NAME ?? 'NCT API SQL Sub',
     serviceWatermark: NCT_SUB_SERVICE_WATERMARK,
@@ -295,6 +108,7 @@ export async function reportToMother(
     reportCount: await bumpServiceReportCount(env.DB),
     reportedAt: nowIso(),
   };
+  const authToken = await deriveServiceAuthToken(serviceUrl);
   const body = JSON.stringify(payload);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getReportTimeoutMs(env));
@@ -303,33 +117,18 @@ export async function reportToMother(
     const response = await fetch(motherReportUrl, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${authToken.token}`,
+        authorization: `Bearer ${authToken}`,
         'content-type': 'application/json',
       },
       body,
       signal: controller.signal
     });
 
-    if (response.status === 401 && options.allowRetry !== false) {
-      await clearMotherAuthToken(env.DB);
-      return reportToMother(env, {
-        allowRetry: false,
-        fallbackOrigin: options.fallbackOrigin,
-        payloadOverride: payload,
-      });
-    }
-
     const responseText = await response.text();
-    const acceptedPayload = response.ok
-      ? await readAcceptedPayload<MotherReportAcceptedPayload>(env, env.DB, responseText)
-      : null;
-    await cacheMotherKeys(env, acceptedPayload);
 
     return {
       delivered: response.ok,
       skipped: false,
-      motherServiceEncryptionPublicKey: acceptedPayload?.motherServiceEncryptionPublicKey ?? null,
-      motherServicePublicKey: acceptedPayload?.motherServicePublicKey ?? null,
       payload,
       responseCode: response.status,
       reason: response.ok
@@ -406,25 +205,7 @@ export async function flushPendingMotherFormRecords(
     };
   }
 
-  const authToken = await ensureMotherAuthToken(env, options);
-  if (!authToken.token) {
-    for (const record of pendingRecords) {
-      await markMotherFormSyncFailure(
-        env.DB,
-        record.recordKey,
-        authToken.reason ?? 'Mother auth bootstrap failed.',
-      );
-    }
-
-    return {
-      deliveredCount: 0,
-      pendingCount: pendingRecords.length,
-      reason: authToken.reason ?? 'Mother auth bootstrap failed.',
-      responseCode: null,
-      skipped: false,
-    };
-  }
-
+  const authToken = await deriveServiceAuthToken(serviceUrl);
   const body = JSON.stringify({
     serviceUrl,
     records: pendingRecords,
@@ -436,20 +217,12 @@ export async function flushPendingMotherFormRecords(
     const response = await fetch(motherFormSyncUrl, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${authToken.token}`,
+        authorization: `Bearer ${authToken}`,
         'content-type': 'application/json',
       },
       body,
       signal: controller.signal,
     });
-
-    if (response.status === 401 && options.allowRetry !== false) {
-      await clearMotherAuthToken(env.DB);
-      return flushPendingMotherFormRecords(env, {
-        allowRetry: false,
-        fallbackOrigin: options.fallbackOrigin,
-      });
-    }
 
     const responseText = await response.text();
     if (!response.ok) {
@@ -470,24 +243,7 @@ export async function flushPendingMotherFormRecords(
     const acceptedPayload = await readAcceptedPayload<{
       accepted?: unknown;
       results?: unknown;
-      motherServiceEncryptionPublicKey?: unknown;
-      motherServicePublicKey?: unknown;
-    }>(env, env.DB, responseText);
-    await cacheMotherKeys(
-      env,
-      acceptedPayload
-        ? {
-            motherServiceEncryptionPublicKey:
-              typeof acceptedPayload.motherServiceEncryptionPublicKey === 'string'
-                ? acceptedPayload.motherServiceEncryptionPublicKey
-                : null,
-            motherServicePublicKey:
-              typeof acceptedPayload.motherServicePublicKey === 'string'
-                ? acceptedPayload.motherServicePublicKey
-                : null,
-          }
-        : null,
-    );
+    }>(responseText);
 
     const resultItems = Array.isArray(acceptedPayload?.results)
       ? acceptedPayload.results

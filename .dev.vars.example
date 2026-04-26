@@ -5,7 +5,6 @@
 # - `DB`: D1 database binding, configured in `wrangler.toml`
 #
 # Runtime-generated values you do NOT need to hand-fill:
-# - Local service encryption key pair: generated on first bootstrap and cached in D1 system records
 # - Form protection secret: generated on first use and cached in D1 system records
 #
 # `NO_TORSION_SITE_URL` is intentionally omitted because the current runtime no
@@ -17,12 +16,10 @@
 # Priority 1 - Required for mother/sub linkage
 # | Env Var | Default | Purpose |
 # | --- | --- | --- |
-# | `SERVICE_PUBLIC_URL` | none | Public origin this sub reports to the mother and exposes for mother push / recovery pull callbacks. |
+# | `SERVICE_PUBLIC_URL` | none | Public origin this sub reports to the mother and uses as the shared HMAC seed for mother/sub requests. |
 # | `MOTHER_REPORT_URL` | none | Mother endpoint used for report delivery and form/correction uplink sync. |
-# | `MOTHER_BOOTSTRAP_URL` | derived from `MOTHER_REPORT_URL` | Optional explicit bootstrap endpoint; leave blank unless bootstrap is served from a different URL. |
 SERVICE_PUBLIC_URL=https://sub.example.com
 MOTHER_REPORT_URL=https://api.example.com/api/sub/report
-MOTHER_BOOTSTRAP_URL=
 
 # Priority 2 - Review for No-Torsion production behavior
 # | Env Var | Default | Purpose |
@@ -52,10 +49,10 @@ GOOGLE_CLOUD_TRANSLATION_API_KEY=
 # | Env Var | Default | Purpose |
 # | --- | --- | --- |
 # | `APP_NAME` | `NCT API SQL Sub` | Human-readable service name used in health and mother report payloads. |
-# | `MOTHER_REPORT_TIMEOUT_MS` | `10000` | Timeout for bootstrap and periodic report requests sent to the mother. |
+# | `MOTHER_REPORT_TIMEOUT_MS` | `10000` | Timeout for periodic report requests sent to the mother. |
 # | `MOTHER_FORM_SYNC_BATCH_SIZE` | `20` | Maximum number of pending D1 form/correction rows sent to the mother in one batch. |
 # | `MOTHER_FORM_SYNC_TIMEOUT_MS` | `MOTHER_REPORT_TIMEOUT_MS` -> `10000` | Timeout for each `sub -> mother` form/correction sync request. |
-# | `SERVICE_AUTH_MAX_SKEW_MS` | `300000` | Allowed clock skew when verifying signed mother requests. |
+# | `DATABACK_EXPORT_MIN_INTERVAL_MS` | `60000` | Minimum interval between public `GET /api/export/nct_databack` requests. |
 # | `NO_TORSION_FORM_PROTECTION_MIN_FILL_MS` | `3000` | Minimum allowed client fill time before a form token is accepted. |
 # | `NO_TORSION_FORM_PROTECTION_MAX_AGE_MS` | `86400000` | Maximum age of a form protection token before it expires. |
 # | `TRANSLATION_PROVIDER_TIMEOUT_MS` | `10000` | Timeout for each Google Cloud Translation request. |
@@ -63,7 +60,7 @@ APP_NAME="NCT API SQL Sub"
 MOTHER_REPORT_TIMEOUT_MS=10000
 MOTHER_FORM_SYNC_BATCH_SIZE=20
 MOTHER_FORM_SYNC_TIMEOUT_MS=10000
-SERVICE_AUTH_MAX_SKEW_MS=300000
+DATABACK_EXPORT_MIN_INTERVAL_MS=60000
 NO_TORSION_FORM_PROTECTION_MIN_FILL_MS=3000
 NO_TORSION_FORM_PROTECTION_MAX_AGE_MS=86400000
 TRANSLATION_PROVIDER_TIMEOUT_MS=10000

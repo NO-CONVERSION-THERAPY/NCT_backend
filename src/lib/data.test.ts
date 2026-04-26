@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { encryptJsonWithPublicKeyMock, sha256Mock } = vi.hoisted(() => ({
-  encryptJsonWithPublicKeyMock: vi.fn(),
+const { sha256Mock } = vi.hoisted(() => ({
   sha256Mock: vi.fn(),
 }));
 
 vi.mock('./crypto', () => ({
-  encryptJsonWithPublicKey: encryptJsonWithPublicKeyMock,
   sha256: sha256Mock,
 }));
 
@@ -58,6 +56,7 @@ function createExportDb(
                 return {
                   payload_json: JSON.stringify({
                     publicKey: '-----BEGIN PUBLIC KEY-----\nmock\n-----END PUBLIC KEY-----',
+                    token: 'mother-token',
                   }),
                 };
               }
@@ -166,12 +165,6 @@ function createPendingSyncDb(rows: PendingSyncRow[]) {
 
 describe('exportDatabackFile', () => {
   it('passes through plain databack rows as plain JSON payloads', async () => {
-    encryptJsonWithPublicKeyMock.mockResolvedValue({
-      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
-      encryptedKey: 'mock-key',
-      iv: 'mock-iv',
-      ciphertext: 'mock-ciphertext',
-    });
     sha256Mock.mockResolvedValue('generated-fingerprint');
 
     const updatedAt = '2026-04-21T00:00:00.000Z';
@@ -215,29 +208,21 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toMatchObject({
+      payload: {
+        city: 'Shanghai',
+        email: 'demo@example.com',
+        name: 'Zhang San',
+      },
       payloadEncryptionState: 'plain-json',
       recordKey: 'patient-1',
       version: 4,
       fingerprint: 'generated-fingerprint',
       updatedAt,
     });
-    expect(result.encryptedRecords).toEqual({
-      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
-      encryptedKey: 'mock-key',
-      iv: 'mock-iv',
-      ciphertext: 'mock-ciphertext',
-    });
     expect(sha256Mock).toHaveBeenCalledTimes(1);
-    expect(encryptJsonWithPublicKeyMock).toHaveBeenCalledTimes(1);
   });
 
   it('passes through already secure payloads without re-encrypting them', async () => {
-    encryptJsonWithPublicKeyMock.mockResolvedValue({
-      algorithm: 'RSA-OAEP-SHA-256+A256GCM',
-      encryptedKey: 'mock-key',
-      iv: 'mock-iv',
-      ciphertext: 'mock-ciphertext',
-    });
     const securePayload: SecureTransferPayload = {
       keyVersion: 2,
       publicData: {
@@ -283,6 +268,7 @@ describe('exportDatabackFile', () => {
       totalRecords: 1,
     });
     expect(result.records[0]).toEqual({
+      payload: securePayload,
       payloadEncryptionState: 'secure-transfer',
       recordKey: 'patient-2',
       version: 8,
@@ -290,15 +276,6 @@ describe('exportDatabackFile', () => {
       updatedAt: '2026-04-21T00:05:00.000Z',
     });
     expect(sha256Mock).not.toHaveBeenCalled();
-    expect(encryptJsonWithPublicKeyMock).toHaveBeenCalledWith(
-      [
-        expect.objectContaining({
-          payload: securePayload,
-          payloadEncryptionState: 'secure-transfer',
-        }),
-      ],
-      '-----BEGIN PUBLIC KEY-----\nmock\n-----END PUBLIC KEY-----',
-    );
   });
 });
 
@@ -397,5 +374,42 @@ describe('mother form sync retry policy', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('keeps raw submitted future fields in pending mother sync records', async () => {
+    const { db } = createPendingSyncDb([
+      {
+        record_key: 'pending-future-field',
+        updated_at: '2026-04-24T00:29:59.000Z',
+        databack_payload_json: JSON.stringify({
+          name: '测试机构',
+          submittedFields: {
+            future_question: '未来新增答案',
+            future_multi: ['第一项', '第二项'],
+          },
+        }),
+        databack_version: 9,
+        databack_fingerprint: 'fingerprint-future',
+        mother_sync_status: 'pending',
+        mother_sync_attempts: 0,
+        mother_sync_last_attempt_at: null,
+      },
+    ]);
+
+    const result = await listPendingMotherFormSyncRecords(db, 10);
+
+    expect(result[0]).toMatchObject({
+      databackFingerprint: 'fingerprint-future',
+      databackVersion: 9,
+      payload: {
+        name: '测试机构',
+        submittedFields: {
+          future_question: '未来新增答案',
+          future_multi: ['第一项', '第二项'],
+        },
+      },
+      recordKey: 'pending-future-field',
+      updatedAt: '2026-04-24T00:29:59.000Z',
+    });
   });
 });
