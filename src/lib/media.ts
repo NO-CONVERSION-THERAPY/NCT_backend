@@ -66,7 +66,7 @@ export type MediaUploadPresignInput = {
   contentType: unknown;
   county?: unknown;
   fileName: unknown;
-  isR18: unknown;
+  isR18?: unknown;
   province?: unknown;
   schoolAddress?: unknown;
   schoolName: unknown;
@@ -719,6 +719,12 @@ function parseTagLabels(value: unknown): string[] {
   return [];
 }
 
+function tagsContainR18(labels: string[]): boolean {
+  return labels.some((label) => (
+    normalizeTagLabel(label).toLocaleLowerCase('zh-CN') === R18_TAG_SLUG
+  ));
+}
+
 function validatePresignInput(
   env: Env,
   input: MediaUploadPresignInput,
@@ -738,7 +744,8 @@ function validatePresignInput(
   const fileName = getString(input.fileName, 160);
   const contentType = getString(input.contentType, 120).toLowerCase();
   const byteSize = Number(input.byteSize);
-  const isR18 = input.isR18 === true || input.isR18 === 'true';
+  const tags = parseTagLabels(input.tags);
+  const isR18 = tagsContainR18(tags);
 
   if (!schoolName) {
     throw new Error('School name is required.');
@@ -752,9 +759,6 @@ function validatePresignInput(
   if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize > getUploadMaxBytes(env)) {
     throw new Error('Media file size is invalid.');
   }
-  if (input.isR18 !== true && input.isR18 !== false && input.isR18 !== 'true' && input.isR18 !== 'false') {
-    throw new Error('R18 selection is required before upload.');
-  }
 
   return {
     byteSize: Math.trunc(byteSize),
@@ -766,7 +770,7 @@ function validatePresignInput(
     province: getString(input.province, 80),
     schoolAddress: getString(input.schoolAddress, 200),
     schoolName,
-    tags: parseTagLabels(input.tags),
+    tags,
   };
 }
 

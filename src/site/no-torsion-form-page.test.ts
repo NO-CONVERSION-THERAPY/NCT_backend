@@ -108,6 +108,11 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('Experience');
     expect(html).toContain('Select a province first');
     expect(html).toContain('"code":"110000"');
+    expect(html).toContain("form.addEventListener('submit', async (event) => {");
+    expect(html).toContain('媒体已提交审核，正在提交问卷。');
+    expect(html).toContain('id="questionnaire-media-picker-open"');
+    expect(html).not.toContain('id="questionnaire-media-upload"');
+    expect(html).not.toContain('name="questionnaire_media_r18"');
   });
 
   it('renders the zh-CN form title, privacy notice, hotline note, and language picker', () => {

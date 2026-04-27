@@ -744,7 +744,6 @@ app.post('/api/media/uploads/direct', async (context) => {
       city: getFormString(formData, 'city'),
       county: getFormString(formData, 'county'),
       file,
-      isR18: getFormString(formData, 'isR18'),
       province: getFormString(formData, 'province'),
       schoolAddress: getFormString(formData, 'schoolAddress'),
       schoolName: getFormString(formData, 'schoolName'),
