@@ -35,7 +35,6 @@ async function uploadFile(file, index, metadata) {
   body.append('file', file, file.name);
   body.append('city', metadata.city);
   body.append('county', metadata.county);
-  body.append('isR18', String(metadata.isR18));
   body.append('province', metadata.province);
   body.append('schoolAddress', metadata.schoolAddress);
   body.append('schoolName', metadata.schoolName);
@@ -61,16 +60,10 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   const formData = new FormData(form);
-  const r18Value = formData.get('isR18');
-  if (r18Value !== 'true' && r18Value !== 'false') {
-    setStatus('上传前必须选择是否 R18。', true);
-    return;
-  }
 
   const metadata = {
     city: String(formData.get('city') || ''),
     county: String(formData.get('county') || ''),
-    isR18: r18Value === 'true',
     province: String(formData.get('province') || ''),
     schoolAddress: String(formData.get('schoolAddress') || ''),
     schoolName: String(formData.get('schoolName') || ''),
@@ -270,7 +263,7 @@ export const MediaUploadPage: FC = () => (
       <main className="shell">
         <header>
           <h1>学校媒体上传</h1>
-          <p>媒体按学校归类。上传内容不绑定具体受害者记录，提交后进入后台审核。</p>
+          <p>媒体按学校归类。上传内容不绑定具体受害者记录，提交后进入后台审核；R18 内容使用 r18 标签标记。</p>
         </header>
         <form id="media-upload-form">
           <div className="grid">
@@ -296,7 +289,7 @@ export const MediaUploadPage: FC = () => (
             </label>
             <label className="full">
               <span>标签，逗号分隔</span>
-              <input list="media-tag-list" maxLength={240} name="tags" placeholder="例如：校门, 宿舍, R18" />
+              <input list="media-tag-list" maxLength={240} name="tags" placeholder="例如：校门, 宿舍, r18" />
               <datalist id="media-tag-list" />
             </label>
             <div className="full media-picker-field">
@@ -305,13 +298,6 @@ export const MediaUploadPage: FC = () => (
                 选择图片 / 视频
               </button>
               <p className="media-selected-summary" id="media-selected-summary">未选择媒体文件。</p>
-            </div>
-          </div>
-          <div>
-            <strong>是否 R18</strong>
-            <div className="choices">
-              <label><input name="isR18" required type="radio" value="false" />否</label>
-              <label><input name="isR18" required type="radio" value="true" />是</label>
             </div>
           </div>
           <button type="submit">上传并提交审核</button>

@@ -1082,7 +1082,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: '机构丑闻及暴力行为（请选出符合自己经历及目睹他人受暴的所有选项）',
     helperCoordinates: '坐标格式为“纬度, 经度”。地图选点或定位会自动填入，也可以手动修改。',
     helperFormIntro: '隐私说明：本问卷中填写的出生年份、性别等个人基本信息将被严格保密，相关经历、机构曝光信息未来可能公开展示，请勿在可能公开的字段中填写身份证号、私人电话、家庭住址等您的个人敏感信息。 填写过程中如感不适可随时停止',
-    helperMediaUpload: '媒体按学校分类，不绑定具体受害者记录。上传后进入后台审核。',
+    helperMediaUpload: '媒体按学校分类，不绑定具体受害者记录。选好后随问卷一起提交；如为 R18 内容请添加 r18 标签。',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入经历，可在经历描述中说明情况',
     hintExperience: '若描述别人经历请在“其它补充”中填写',
@@ -1193,7 +1193,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: '機構醜聞及暴力行為（請選出符合自己經歷及目睹他人受暴的所有選項）',
     helperCoordinates: '座標格式為「緯度, 經度」。地圖選點或定位會自動填入，也可以手動修改。',
     helperFormIntro: '隱私說明：本問卷中填寫的出生年份、性別等個人基本資訊將被嚴格保密，相關經歷、機構曝光資訊未來可能公開展示，請勿在可能公開的欄位中填寫身分證號、私人電話、家庭住址等您的個人敏感資訊。 填寫過程中如感不適可隨時停止',
-    helperMediaUpload: '媒體按學校分類，不綁定具體受害者記錄。上傳後進入後台審核。',
+    helperMediaUpload: '媒體按學校分類，不綁定具體受害者記錄。選好後隨問卷一起提交；如為 R18 內容請加入 r18 標籤。',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入經歷，可在經歷描述中說明情況',
     hintExperience: '若描述別人經歷請在「其它補充」中填寫',
@@ -1304,7 +1304,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: 'Scandals and violent acts',
     helperCoordinates: 'Coordinate format is "latitude, longitude". Map selection or geolocation will fill it automatically, and you can edit it manually.',
     helperFormIntro: 'Privacy notice: Personal basic information entered in this questionnaire, such as birth year and sex/gender, will be kept strictly confidential. Related experiences and institution exposure information may be publicly displayed in the future. Please do not enter ID numbers, private phone numbers, home addresses, or other personal sensitive information in fields that may become public. You may stop at any time if you feel uncomfortable while filling it out.',
-    helperMediaUpload: 'Media is grouped by school and is not linked to a specific survivor record. Uploads require backend review.',
+    helperMediaUpload: 'Media is grouped by school and is not linked to a specific survivor record. Selected media is submitted with the questionnaire; add the r18 tag for R18 content.',
     hintDateEnd: 'Leave blank if the person is still there.',
     hintDateStart: 'If there were multiple admissions, describe them in the experience field.',
     hintExperience: 'If describing someone else, add context in Other notes.',
@@ -1945,11 +1945,12 @@ function syncQuestionnaireMediaUpload() {
   const panel = document.getElementById('questionnaire-media-panel');
   if (!panel) return;
 
-  const button = document.getElementById('questionnaire-media-upload');
+  const form = panel.closest('form');
   const fileInput = document.getElementById('questionnaire-media-file');
   const tagInput = document.getElementById('questionnaire-media-tags');
   const status = document.getElementById('questionnaire-media-status');
   const mediaPicker = window.createSchoolMediaPicker('questionnaire-media');
+  let mediaSubmittedWithForm = false;
 
   function setStatus(message, isError) {
     if (!status) return;
@@ -1969,20 +1970,13 @@ function syncQuestionnaireMediaUpload() {
     return option ? option.textContent.trim() : '';
   }
 
-  async function requestJson(path, body) {
-    const response = await fetch(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || 'Request failed.');
-    }
-    return payload;
+  function parseTags() {
+    return tagInput && tagInput.value
+      ? tagInput.value.split(',').map((item) => item.trim()).filter(Boolean)
+      : [];
   }
 
-  if (!button || !fileInput) return;
+  if (!form || !fileInput) return;
 
   async function uploadFile(file, index, metadata) {
     setFileStatus(index, '正在上传到后端', false);
@@ -1990,7 +1984,6 @@ function syncQuestionnaireMediaUpload() {
     body.append('file', file, file.name);
     body.append('city', metadata.city);
     body.append('county', metadata.county);
-    body.append('isR18', String(metadata.isR18));
     body.append('province', metadata.province);
     body.append('schoolAddress', metadata.schoolAddress);
     body.append('schoolName', metadata.schoolName);
@@ -2008,12 +2001,25 @@ function syncQuestionnaireMediaUpload() {
     return payload.media;
   }
 
-  button.addEventListener('click', async () => {
+  form.addEventListener('submit', async (event) => {
+    if (mediaSubmittedWithForm || event.defaultPrevented) return;
+
     const files = mediaPicker.getFiles();
+    if (files.length === 0) return;
+
+    event.preventDefault();
+    if (!form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
+
     const schoolNameInput = document.querySelector('input[name="school_name"]');
     const addressInput = document.querySelector('input[name="school_address"]');
-    const r18Input = document.querySelector('input[name="questionnaire_media_r18"]:checked');
     const schoolName = schoolNameInput ? schoolNameInput.value.trim() : '';
+    const submitter = event.submitter && event.submitter instanceof HTMLElement
+      ? event.submitter
+      : null;
+    const submitButtons = Array.from(form.querySelectorAll('button[type="submit"]'));
 
     if (!schoolName) {
       setStatus('请先填写机构名称。', true);
@@ -2023,26 +2029,21 @@ function syncQuestionnaireMediaUpload() {
       setStatus('请选择媒体文件。', true);
       return;
     }
-    if (!r18Input) {
-      setStatus('上传前必须选择是否 R18。', true);
-      return;
-    }
 
     const metadata = {
       city: selectedText('report-area-city'),
       county: selectedText('report-area-county'),
-      isR18: r18Input.value === 'true',
       province: selectedText('report-area-province'),
       schoolAddress: addressInput ? addressInput.value.trim() : '',
       schoolName,
-      tags: tagInput && tagInput.value
-        ? tagInput.value.split(',').map((item) => item.trim()).filter(Boolean)
-        : [],
+      tags: parseTags(),
     };
 
     let succeeded = 0;
     let failed = 0;
-    button.disabled = true;
+    submitButtons.forEach((button) => {
+      button.disabled = true;
+    });
     try {
       for (const [index, file] of files.entries()) {
         try {
@@ -2056,12 +2057,31 @@ function syncQuestionnaireMediaUpload() {
       }
 
       if (failed === 0) {
+        mediaSubmittedWithForm = true;
         mediaPicker.clear();
         if (tagInput) tagInput.value = '';
+        setStatus('媒体已提交审核，正在提交问卷。', false);
+        submitButtons.forEach((button) => {
+          button.disabled = false;
+        });
+        if (typeof form.requestSubmit === 'function') {
+          if (submitter) {
+            form.requestSubmit(submitter);
+          } else {
+            form.requestSubmit();
+          }
+        } else {
+          form.submit();
+        }
+        return;
       }
       setStatus('上传完成：' + succeeded + ' 成功，' + failed + ' 失败。', failed > 0);
     } finally {
-      button.disabled = false;
+      if (!mediaSubmittedWithForm) {
+        submitButtons.forEach((button) => {
+          button.disabled = false;
+        });
+      }
     }
   });
 }
@@ -2472,27 +2492,11 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
                     <input
                       id="questionnaire-media-tags"
                       maxLength={240}
-                      placeholder="R18, 校门, 宿舍"
+                      placeholder="r18, 校门, 宿舍"
                       type="text"
                     />
                   </label>
                 </div>
-                <div>
-                  <span className="field__label">{texts.fieldMediaR18}</span>
-                  <div className="choice-grid">
-                    <label className="choice-option">
-                      <input name="questionnaire_media_r18" type="radio" value="false" />
-                      <span>否</span>
-                    </label>
-                    <label className="choice-option">
-                      <input name="questionnaire_media_r18" type="radio" value="true" />
-                      <span>是</span>
-                    </label>
-                  </div>
-                </div>
-                <button className="button button--secondary" id="questionnaire-media-upload" type="button">
-                  {texts.actionUploadMedia}
-                </button>
                 <div className="media-preview-grid" hidden id="questionnaire-media-preview-list" />
                 <p className="field-note" hidden id="questionnaire-media-status" />
                 <div className="media-picker-modal" hidden id="questionnaire-media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="questionnaire-media-picker-title">
