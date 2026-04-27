@@ -13,7 +13,6 @@ import {
   type NoTorsionConfirmResult,
   type NoTorsionFormValues,
 } from '../lib/no-torsion-form';
-import { MEDIA_PICKER_CSS, MEDIA_PICKER_SCRIPT } from './media-picker-assets';
 
 type AreaOption = {
   code: string;
@@ -28,7 +27,6 @@ type PageTexts = {
   actionHome: string;
   actionOpenForm: string;
   actionOpenMapPicker: string;
-  actionUploadMedia: string;
   actionSubmit: string;
   actionSubmitting: string;
   actionUseCurrentLocation: string;
@@ -49,10 +47,6 @@ type PageTexts = {
   fieldHeadmaster: string;
   fieldIdentity: string;
   fieldLegalAidStatus: string;
-  fieldMediaFile: string;
-  fieldMediaR18: string;
-  fieldMediaSection: string;
-  fieldMediaTags: string;
   fieldOther: string;
   fieldParentMotivations: string;
   fieldPreInstitutionCity: string;
@@ -70,7 +64,6 @@ type PageTexts = {
   fieldVictimSex: string;
   fieldViolenceCategories: string;
   helperFormIntro: string;
-  helperMediaUpload: string;
   helperCoordinates: string;
   hintDateEnd: string;
   hintDateStart: string;
@@ -466,14 +459,6 @@ button {
   line-height: 1.6;
 }
 
-.field-note[data-state="error"] {
-  color: var(--danger);
-}
-
-.field-note[data-state="ok"] {
-  color: var(--success);
-}
-
 .inline-grid {
   display: grid;
   gap: 12px;
@@ -484,63 +469,6 @@ button {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.media-preview-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
-.media-preview-grid[hidden] {
-  display: none !important;
-}
-
-.media-preview-card {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(22, 32, 51, 0.12);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.media-preview-frame {
-  aspect-ratio: 16 / 10;
-  overflow: hidden;
-  border-radius: 10px;
-  background: rgba(22, 32, 51, 0.08);
-}
-
-.media-preview-frame img,
-.media-preview-frame video {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.media-preview-meta {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 0.86rem;
-  line-height: 1.45;
-}
-
-.media-preview-name {
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-weight: 700;
-}
-
-.media-preview-status[data-state="error"] {
-  color: var(--danger);
-}
-
-.media-preview-status[data-state="ok"] {
-  color: var(--success);
 }
 
 .choice-option {
@@ -651,8 +579,6 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.32));
   border-color: var(--border);
 }
-
-${MEDIA_PICKER_CSS}
 
 .location-actions {
   display: flex;
@@ -1039,7 +965,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     actionHome: '返回主页',
     actionOpenForm: '打开填写页',
     actionOpenMapPicker: '点击可直接在地图上选点',
-    actionUploadMedia: '上传并提交审核',
     actionSubmit: '继续确认',
     actionSubmitting: '提交中...',
     actionUseCurrentLocation: '获取当前位置',
@@ -1060,10 +985,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldHeadmaster: '负责人 / 校长姓名',
     fieldIdentity: '请问您是作为什么身份来填写本表单？',
     fieldLegalAidStatus: '是否曾对此经历进行过举报或寻求法律援助',
-    fieldMediaFile: '学校相关媒体',
-    fieldMediaR18: '是否 R18',
-    fieldMediaSection: '学校媒体',
-    fieldMediaTags: '媒体标签，逗号分隔',
     fieldOther: '其它补充',
     fieldParentMotivations: '家长选择矫正机构的原因/动机？',
     fieldPreInstitutionCity: '进入机构前所在城市？',
@@ -1082,7 +1003,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: '机构丑闻及暴力行为（请选出符合自己经历及目睹他人受暴的所有选项）',
     helperCoordinates: '坐标格式为“纬度, 经度”。地图选点或定位会自动填入，也可以手动修改。',
     helperFormIntro: '隐私说明：本问卷中填写的出生年份、性别等个人基本信息将被严格保密，相关经历、机构曝光信息未来可能公开展示，请勿在可能公开的字段中填写身份证号、私人电话、家庭住址等您的个人敏感信息。 填写过程中如感不适可随时停止',
-    helperMediaUpload: '媒体按学校分类，不绑定具体受害者记录。上传后进入后台审核。',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入经历，可在经历描述中说明情况',
     hintExperience: '若描述别人经历请在“其它补充”中填写',
@@ -1150,7 +1070,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     actionHome: '返回主頁',
     actionOpenForm: '開啟填寫頁',
     actionOpenMapPicker: '點擊可直接在地圖上選點',
-    actionUploadMedia: '上傳並提交審核',
     actionSubmit: '繼續確認',
     actionSubmitting: '送出中...',
     actionUseCurrentLocation: '取得目前位置',
@@ -1171,10 +1090,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldHeadmaster: '負責人 / 校長姓名',
     fieldIdentity: '請問您是以什麼身份填寫本表單？',
     fieldLegalAidStatus: '是否曾對此經歷進行舉報或尋求法律援助',
-    fieldMediaFile: '學校相關媒體',
-    fieldMediaR18: '是否 R18',
-    fieldMediaSection: '學校媒體',
-    fieldMediaTags: '媒體標籤，逗號分隔',
     fieldOther: '其它補充',
     fieldParentMotivations: '家長選擇矯正機構的原因 / 動機？',
     fieldPreInstitutionCity: '進入機構前所在城市？',
@@ -1193,7 +1108,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: '機構醜聞及暴力行為（請選出符合自己經歷及目睹他人受暴的所有選項）',
     helperCoordinates: '座標格式為「緯度, 經度」。地圖選點或定位會自動填入，也可以手動修改。',
     helperFormIntro: '隱私說明：本問卷中填寫的出生年份、性別等個人基本資訊將被嚴格保密，相關經歷、機構曝光資訊未來可能公開展示，請勿在可能公開的欄位中填寫身分證號、私人電話、家庭住址等您的個人敏感資訊。 填寫過程中如感不適可隨時停止',
-    helperMediaUpload: '媒體按學校分類，不綁定具體受害者記錄。上傳後進入後台審核。',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入經歷，可在經歷描述中說明情況',
     hintExperience: '若描述別人經歷請在「其它補充」中填寫',
@@ -1261,7 +1175,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     actionHome: 'Back to home',
     actionOpenForm: 'Open form',
     actionOpenMapPicker: 'Pick on map',
-    actionUploadMedia: 'Upload for review',
     actionSubmit: 'Continue',
     actionSubmitting: 'Submitting...',
     actionUseCurrentLocation: 'Use current location',
@@ -1282,10 +1195,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldHeadmaster: 'Headmaster / lead staff',
     fieldIdentity: 'What identity are you using to fill out this form?',
     fieldLegalAidStatus: 'Report or legal aid status',
-    fieldMediaFile: 'School-related media',
-    fieldMediaR18: 'R18 media?',
-    fieldMediaSection: 'School media',
-    fieldMediaTags: 'Media tags, comma-separated',
     fieldOther: 'Other notes',
     fieldParentMotivations: 'Why did the guardian choose the correction institution?',
     fieldPreInstitutionCity: 'City before entering the institution',
@@ -1304,7 +1213,6 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     fieldViolenceCategories: 'Scandals and violent acts',
     helperCoordinates: 'Coordinate format is "latitude, longitude". Map selection or geolocation will fill it automatically, and you can edit it manually.',
     helperFormIntro: 'Privacy notice: Personal basic information entered in this questionnaire, such as birth year and sex/gender, will be kept strictly confidential. Related experiences and institution exposure information may be publicly displayed in the future. Please do not enter ID numbers, private phone numbers, home addresses, or other personal sensitive information in fields that may become public. You may stop at any time if you feel uncomfortable while filling it out.',
-    helperMediaUpload: 'Media is grouped by school and is not linked to a specific survivor record. Uploads require backend review.',
     hintDateEnd: 'Leave blank if the person is still there.',
     hintDateStart: 'If there were multiple admissions, describe them in the experience field.',
     hintExperience: 'If describing someone else, add context in Other notes.',
@@ -1941,131 +1849,6 @@ function syncLocationPicker() {
   });
 }
 
-function syncQuestionnaireMediaUpload() {
-  const panel = document.getElementById('questionnaire-media-panel');
-  if (!panel) return;
-
-  const button = document.getElementById('questionnaire-media-upload');
-  const fileInput = document.getElementById('questionnaire-media-file');
-  const tagInput = document.getElementById('questionnaire-media-tags');
-  const status = document.getElementById('questionnaire-media-status');
-  const mediaPicker = window.createSchoolMediaPicker('questionnaire-media');
-
-  function setStatus(message, isError) {
-    if (!status) return;
-    status.textContent = message;
-    status.dataset.state = isError ? 'error' : 'ok';
-    status.hidden = false;
-  }
-
-  function setFileStatus(index, message, isError) {
-    mediaPicker.setFileStatus(index, message, isError);
-  }
-
-  function selectedText(selectId) {
-    const select = document.getElementById(selectId);
-    if (!select || !select.options || select.selectedIndex < 0) return '';
-    const option = select.options[select.selectedIndex];
-    return option ? option.textContent.trim() : '';
-  }
-
-  async function requestJson(path, body) {
-    const response = await fetch(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || 'Request failed.');
-    }
-    return payload;
-  }
-
-  if (!button || !fileInput) return;
-
-  async function uploadFile(file, index, metadata) {
-    setFileStatus(index, '正在上传到后端', false);
-    const body = new FormData();
-    body.append('file', file, file.name);
-    body.append('city', metadata.city);
-    body.append('county', metadata.county);
-    body.append('isR18', String(metadata.isR18));
-    body.append('province', metadata.province);
-    body.append('schoolAddress', metadata.schoolAddress);
-    body.append('schoolName', metadata.schoolName);
-    body.append('tags', JSON.stringify(metadata.tags));
-
-    const response = await fetch('/api/media/uploads/direct', {
-      method: 'POST',
-      body,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || '上传失败。');
-    }
-    setFileStatus(index, '已提交审核：' + payload.media.status, false);
-    return payload.media;
-  }
-
-  button.addEventListener('click', async () => {
-    const files = mediaPicker.getFiles();
-    const schoolNameInput = document.querySelector('input[name="school_name"]');
-    const addressInput = document.querySelector('input[name="school_address"]');
-    const r18Input = document.querySelector('input[name="questionnaire_media_r18"]:checked');
-    const schoolName = schoolNameInput ? schoolNameInput.value.trim() : '';
-
-    if (!schoolName) {
-      setStatus('请先填写机构名称。', true);
-      return;
-    }
-    if (files.length === 0) {
-      setStatus('请选择媒体文件。', true);
-      return;
-    }
-    if (!r18Input) {
-      setStatus('上传前必须选择是否 R18。', true);
-      return;
-    }
-
-    const metadata = {
-      city: selectedText('report-area-city'),
-      county: selectedText('report-area-county'),
-      isR18: r18Input.value === 'true',
-      province: selectedText('report-area-province'),
-      schoolAddress: addressInput ? addressInput.value.trim() : '',
-      schoolName,
-      tags: tagInput && tagInput.value
-        ? tagInput.value.split(',').map((item) => item.trim()).filter(Boolean)
-        : [],
-    };
-
-    let succeeded = 0;
-    let failed = 0;
-    button.disabled = true;
-    try {
-      for (const [index, file] of files.entries()) {
-        try {
-          await uploadFile(file, index, metadata);
-          succeeded += 1;
-        } catch (error) {
-          failed += 1;
-          setFileStatus(index, error instanceof Error ? error.message : '上传失败', true);
-        }
-        setStatus('上传进度：' + succeeded + ' 成功，' + failed + ' 失败，合计 ' + files.length + ' 个。', failed > 0);
-      }
-
-      if (failed === 0) {
-        mediaPicker.clear();
-        if (tagInput) tagInput.value = '';
-      }
-      setStatus('上传完成：' + succeeded + ' 成功，' + failed + ' 失败。', failed > 0);
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
 syncAreaSelectors('report-area', {
   city: document.body.dataset.cityPlaceholder || '',
   county: document.body.dataset.countyPlaceholder || '',
@@ -2078,7 +1861,6 @@ syncConditionalVisibility();
 syncEnhancedValidation();
 syncDateValidation();
 syncLocationPicker();
-syncQuestionnaireMediaUpload();
 `;
 }
 
@@ -2456,70 +2238,6 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
                 </p>
               </div>
 
-              <div className="field field--full" id="questionnaire-media-panel">
-                <h2 className="form-section-title">{texts.fieldMediaSection}</h2>
-                <p className="field-note">{texts.helperMediaUpload}</p>
-                <div className="inline-grid">
-                  <div className="media-picker-field">
-                    <span className="field__label">{texts.fieldMediaFile}</span>
-                    <button className="media-picker-open-button" id="questionnaire-media-picker-open" type="button">
-                      选择图片 / 视频
-                    </button>
-                    <p className="media-selected-summary" id="questionnaire-media-selected-summary">未选择媒体文件。</p>
-                  </div>
-                  <label>
-                    <span className="field__label">{texts.fieldMediaTags}</span>
-                    <input
-                      id="questionnaire-media-tags"
-                      maxLength={240}
-                      placeholder="R18, 校门, 宿舍"
-                      type="text"
-                    />
-                  </label>
-                </div>
-                <div>
-                  <span className="field__label">{texts.fieldMediaR18}</span>
-                  <div className="choice-grid">
-                    <label className="choice-option">
-                      <input name="questionnaire_media_r18" type="radio" value="false" />
-                      <span>否</span>
-                    </label>
-                    <label className="choice-option">
-                      <input name="questionnaire_media_r18" type="radio" value="true" />
-                      <span>是</span>
-                    </label>
-                  </div>
-                </div>
-                <button className="button button--secondary" id="questionnaire-media-upload" type="button">
-                  {texts.actionUploadMedia}
-                </button>
-                <div className="media-preview-grid" hidden id="questionnaire-media-preview-list" />
-                <p className="field-note" hidden id="questionnaire-media-status" />
-                <div className="media-picker-modal" hidden id="questionnaire-media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="questionnaire-media-picker-title">
-                  <div className="media-picker-backdrop" data-media-picker-close="true" />
-                  <section className="media-picker-panel">
-                    <div className="media-picker-header">
-                      <h2 id="questionnaire-media-picker-title">选择学校媒体</h2>
-                      <button aria-label="关闭" className="media-picker-close" id="questionnaire-media-picker-close" type="button">×</button>
-                    </div>
-                    <div className="media-picker-body">
-                      <div className="media-picker-dropzone" id="questionnaire-media-picker-dropzone">
-                        <strong>拖拽图片或视频到这里</strong>
-                        <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
-                        <button className="media-picker-secondary" id="questionnaire-media-picker-choose" type="button">选择文件</button>
-                        <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" hidden id="questionnaire-media-file" multiple type="file" />
-                      </div>
-                      <p className="media-picker-message" id="questionnaire-media-picker-message">拖拽文件到此处，或点击选择文件。</p>
-                      <div className="media-preview-grid" hidden id="questionnaire-media-picker-draft-list" />
-                    </div>
-                    <div className="media-picker-footer">
-                      <button className="media-picker-secondary" id="questionnaire-media-picker-cancel" type="button">取消</button>
-                      <button className="media-picker-confirm" id="questionnaire-media-picker-confirm" type="button">确定</button>
-                    </div>
-                  </section>
-                </div>
-              </div>
-
               <div className="field">
                 <span className="field__label">{texts.fieldContact}</span>
                 <input maxLength={30} name="contact_information" placeholder={texts.placeholderContact} required type="text" />
@@ -2583,7 +2301,6 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
         id="area-payload"
         type="application/json"
       />
-      <script dangerouslySetInnerHTML={{ __html: MEDIA_PICKER_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: AREA_SCRIPT }} />
     </HtmlDocument>
   );
