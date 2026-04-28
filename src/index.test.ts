@@ -191,7 +191,8 @@ describe('No-Torsion backend routes', () => {
     expect(html).toContain('public-form-token');
     expect(html).toContain('Conversion Institution Survivor Questionnaire');
     expect(html).toContain('data-standalone-language-link="zh-CN"');
-    expect(html).toContain('Back to home');
+    expect(html).not.toContain('Back to home');
+    expect(html).toContain('Crisis support');
     expect(html).toContain('/form?lang=en');
     expect(issueFormProtectionTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({ DB: expect.anything() }),
@@ -212,7 +213,8 @@ describe('No-Torsion backend routes', () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain('href="https://nct.example.com/?lang=en" target="_top"');
+    expect(html).not.toContain('Back to home');
+    expect(html).toContain('embedded-public-form-token');
   });
 
   it('renders the standalone form page at the service root', async () => {

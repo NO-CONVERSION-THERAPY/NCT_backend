@@ -18,6 +18,9 @@ const DEFAULT_ALLOWED_MIME_TYPES = [
   'video/webm',
 ];
 const DEFAULT_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const HARDCODED_B2_BUCKET_NAME = 'jiaozheng';
+const HARDCODED_B2_S3_ENDPOINT = 'https://s3.eu-central-003.backblazeb2.com';
+const HARDCODED_B2_PUBLIC_BASE_URL = 'https://f003.backblazeb2.com/file/jiaozheng';
 const MEDIA_FAST_RETRY_LIMIT = 5;
 const MEDIA_FAST_RETRY_DELAY_MS = 60 * 1000;
 const MEDIA_SLOW_RETRY_DELAY_MS = 30 * 60 * 1000;
@@ -233,11 +236,11 @@ function resolveB2Config(env: Env): {
 } {
   const applicationKeyId = env.B2_APPLICATION_KEY_ID?.trim();
   const applicationKey = env.B2_APPLICATION_KEY?.trim();
-  const bucketName = env.B2_BUCKET_NAME?.trim();
-  const endpointValue = env.B2_S3_ENDPOINT?.trim();
-  const publicBaseUrl = env.B2_PUBLIC_BASE_URL?.trim();
+  const bucketName = HARDCODED_B2_BUCKET_NAME;
+  const endpointValue = HARDCODED_B2_S3_ENDPOINT;
+  const publicBaseUrl = HARDCODED_B2_PUBLIC_BASE_URL;
 
-  if (!applicationKeyId || !applicationKey || !bucketName || !endpointValue || !publicBaseUrl) {
+  if (!applicationKeyId || !applicationKey) {
     throw new Error('B2 media upload is not configured.');
   }
 
@@ -977,6 +980,16 @@ async function markMediaUploadComplete(
   return stored;
 }
 
+export type MediaSubmitTarget = 'b2' | 'd1' | 'both';
+
+export function getMediaSubmitTarget(env: Env): MediaSubmitTarget {
+  const raw = String(env.NO_TORSION_MEDIA_SUBMIT_TARGET ?? 'both').trim().toLowerCase();
+  if (raw === 'b2' || raw === 'd1' || raw === 'both') {
+    return raw;
+  }
+  return 'both';
+}
+
 export async function uploadMediaDirect(
   env: Env,
   input: MediaUploadDirectInput,
@@ -986,13 +999,63 @@ export async function uploadMediaDirect(
     throw new Error('Media file is required.');
   }
 
+  const target = getMediaSubmitTarget(env);
+
+  if (target === 'b2') {
+    const values = validatePresignInput(env, {
+      ...input,
+      byteSize: file.size,
+      contentType: file.type || 'application/octet-stream',
+      fileName: file.name,
+    });
+    const mediaType = getMediaType(values.contentType);
+    const mediaId = crypto.randomUUID();
+    const schoolSlug = slugify(values.schoolName).slice(0, 80);
+    const year = new Date().getUTCFullYear();
+    const objectKey = [
+      'media',
+      'schools',
+      schoolSlug,
+      String(year),
+      `${mediaId}.${getExtension(values.fileName, values.contentType)}`,
+    ].join('/');
+    await uploadB2Native(env, objectKey, file, values.contentType);
+    const nowAt = nowIso();
+    return {
+      id: mediaId,
+      objectKey,
+      publicUrl: buildPublicUrl(env, objectKey),
+      mediaType,
+      contentType: values.contentType,
+      byteSize: values.byteSize,
+      fileName: values.fileName,
+      schoolName: values.schoolName,
+      schoolNameNorm: normalizeSchoolName(values.schoolName),
+      schoolAddress: values.schoolAddress,
+      province: values.province,
+      city: values.city,
+      county: values.county,
+      isR18: values.isR18,
+      status: 'pending_review',
+      reviewNote: null,
+      uploadedAt: nowAt,
+      reviewedAt: null,
+      createdAt: nowAt,
+      updatedAt: nowAt,
+      tags: [],
+    } satisfies SchoolMediaRecord;
+  }
+
   const upload = await createMediaUpload(env, {
     ...input,
     byteSize: file.size,
     contentType: file.type || 'application/octet-stream',
     fileName: file.name,
   });
-  await uploadB2Native(env, upload.media.objectKey, file, upload.media.contentType);
+
+  if (target !== 'd1') {
+    await uploadB2Native(env, upload.media.objectKey, file, upload.media.contentType);
+  }
 
   return markMediaUploadComplete(env.DB, upload.media.id);
 }

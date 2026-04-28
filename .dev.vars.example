@@ -8,7 +8,9 @@
 # - Form protection secret: generated on first use and cached in D1 system records
 #
 # `NO_TORSION_SITE_URL` is intentionally omitted because the current runtime no
-# longer reads it.
+# longer reads it. The runtime also no longer reads
+# `NO_TORSION_GOOGLE_FORM_URL` / `NO_TORSION_CORRECTION_GOOGLE_FORM_URL`; only
+# the `*_FORM_ID` keys below are used.
 #
 # Tables below are sorted by importance.
 # `Default` means the runtime behavior when the variable is omitted.
@@ -17,9 +19,9 @@
 # | Env Var | Default | Purpose |
 # | --- | --- | --- |
 # | `SERVICE_PUBLIC_URL` | none | Public origin this sub reports to the mother and uses as the shared HMAC seed for mother/sub requests. |
-# | `MOTHER_REPORT_URL` | none | Mother endpoint used for report delivery and form/correction uplink sync. |
-SERVICE_PUBLIC_URL=https://sub.example.com
-MOTHER_REPORT_URL=https://api.example.com/api/sub/report
+# | `MOTHER_REPORT_URL` | none | Mother service base URL; `/api/sub/report`, `/api/sub/form-records`, and `/api/sub/media-records` are appended by the Worker. |
+SERVICE_PUBLIC_URL=http://127.0.0.1:8791
+MOTHER_REPORT_URL=http://127.0.0.1:8787
 
 # Priority 2 - Review for No-Torsion production behavior
 # | Env Var | Default | Purpose |
@@ -27,25 +29,39 @@ MOTHER_REPORT_URL=https://api.example.com/api/sub/report
 # | `NO_TORSION_FORM_DRY_RUN` | `true` | When `true`, form submissions stay in preview/confirm mode instead of sending to Google Form automatically. |
 # | `NO_TORSION_FORM_SUBMIT_TARGET` | `both` | Controls whether confirmed form submissions write to Google, D1, or both. |
 # | `NO_TORSION_CORRECTION_SUBMIT_TARGET` | `both` | Controls whether correction submissions write to Google, D1, or both. |
+# | `NO_TORSION_MEDIA_SUBMIT_TARGET` | `both` | `b2` uploads only to Backblaze B2 and skips the D1 row; `d1` writes the metadata row only and skips B2; `both` performs both (default). |
 NO_TORSION_FORM_DRY_RUN=true
 NO_TORSION_FORM_SUBMIT_TARGET=both
 NO_TORSION_CORRECTION_SUBMIT_TARGET=both
+NO_TORSION_MEDIA_SUBMIT_TARGET=both
 
 # Priority 3 - Optional external integrations
 # | Env Var | Default | Purpose |
 # | --- | --- | --- |
-# | `NO_TORSION_GOOGLE_FORM_URL` | blank -> built-in default form ID | Full Google Form submit URL for main submissions. |
-# | `NO_TORSION_FORM_ID` | blank -> built-in default form ID | Alternative to `NO_TORSION_GOOGLE_FORM_URL`; use a Google Form ID instead of a full URL. |
-# | `NO_TORSION_CORRECTION_GOOGLE_FORM_URL` | blank -> built-in default correction form ID | Full Google Form submit URL for corrections. |
-# | `NO_TORSION_CORRECTION_FORM_ID` | blank -> built-in default correction form ID | Alternative to `NO_TORSION_CORRECTION_GOOGLE_FORM_URL`; use a correction form ID instead of a full URL. |
+# | `NO_TORSION_FORM_ID` | blank -> built-in default form ID | Google Form ID for main submissions. |
+# | `NO_TORSION_CORRECTION_FORM_ID` | blank -> built-in default correction form ID | Google Form ID for correction submissions. |
 # | `GOOGLE_CLOUD_TRANSLATION_API_KEY` | blank | Enables `/api/no-torsion/translate-text`; blank makes translation requests return a configuration error. |
-NO_TORSION_GOOGLE_FORM_URL=
 NO_TORSION_FORM_ID=
-NO_TORSION_CORRECTION_GOOGLE_FORM_URL=
 NO_TORSION_CORRECTION_FORM_ID=
 GOOGLE_CLOUD_TRANSLATION_API_KEY=
 
-# Priority 4 - Optional naming and tuning
+# Priority 4 - B2 media upload
+# Bucket name, S3 endpoint, and public base URL are hard-coded in
+# `src/lib/media.ts` (`jiaozheng` bucket on `eu-central-003`); only the
+# credential pair below has to be supplied. If either is blank, the runtime
+# rejects upload requests.
+# | Env Var | Default | Purpose |
+# | --- | --- | --- |
+# | `B2_APPLICATION_KEY_ID` | none | Backblaze B2 application key id used for S3-compatible presigned uploads. Treat as a secret. |
+# | `B2_APPLICATION_KEY` | none | Backblaze B2 application key secret. Treat as a secret. |
+# | `B2_ALLOWED_MIME_TYPES` | image/video defaults | Comma-separated allowed MIME types for uploads. |
+# | `B2_UPLOAD_MAX_BYTES` | `104857600` | Maximum single media upload size, in bytes. |
+B2_APPLICATION_KEY_ID=
+B2_APPLICATION_KEY=
+B2_ALLOWED_MIME_TYPES=image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm
+B2_UPLOAD_MAX_BYTES=104857600
+
+# Priority 5 - Optional naming and tuning
 # | Env Var | Default | Purpose |
 # | --- | --- | --- |
 # | `APP_NAME` | `NCT API SQL Sub` | Human-readable service name used in health and mother report payloads. |
@@ -53,6 +69,7 @@ GOOGLE_CLOUD_TRANSLATION_API_KEY=
 # | `MOTHER_FORM_SYNC_BATCH_SIZE` | `20` | Maximum number of pending D1 form/correction rows sent to the mother in one batch. |
 # | `MOTHER_FORM_SYNC_TIMEOUT_MS` | `MOTHER_REPORT_TIMEOUT_MS` -> `10000` | Timeout for each `sub -> mother` form/correction sync request. |
 # | `DATABACK_EXPORT_MIN_INTERVAL_MS` | `60000` | Minimum interval between public `GET /api/export/nct_databack` requests. |
+# | `DEBUG_MOD` | `false` | Enables `/debug` standalone page previews when set to `true`; keep disabled outside temporary testing. |
 # | `NO_TORSION_FORM_PROTECTION_MIN_FILL_MS` | `3000` | Minimum allowed client fill time before a form token is accepted. |
 # | `NO_TORSION_FORM_PROTECTION_MAX_AGE_MS` | `86400000` | Maximum age of a form protection token before it expires. |
 # | `TRANSLATION_PROVIDER_TIMEOUT_MS` | `10000` | Timeout for each Google Cloud Translation request. |
@@ -61,6 +78,7 @@ MOTHER_REPORT_TIMEOUT_MS=10000
 MOTHER_FORM_SYNC_BATCH_SIZE=20
 MOTHER_FORM_SYNC_TIMEOUT_MS=10000
 DATABACK_EXPORT_MIN_INTERVAL_MS=60000
+DEBUG_MOD=false
 NO_TORSION_FORM_PROTECTION_MIN_FILL_MS=3000
 NO_TORSION_FORM_PROTECTION_MAX_AGE_MS=86400000
 TRANSLATION_PROVIDER_TIMEOUT_MS=10000

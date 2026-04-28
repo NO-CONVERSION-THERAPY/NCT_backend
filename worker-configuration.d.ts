@@ -3,9 +3,6 @@ interface Env {
   APP_NAME?: string;
   B2_APPLICATION_KEY?: string;
   B2_APPLICATION_KEY_ID?: string;
-  B2_BUCKET_NAME?: string;
-  B2_PUBLIC_BASE_URL?: string;
-  B2_S3_ENDPOINT?: string;
   B2_ALLOWED_MIME_TYPES?: string;
   B2_UPLOAD_MAX_BYTES?: string;
   GOOGLE_CLOUD_TRANSLATION_API_KEY?: string;
@@ -17,6 +14,7 @@ interface Env {
   NO_TORSION_FORM_PROTECTION_MAX_AGE_MS?: string;
   NO_TORSION_FORM_PROTECTION_MIN_FILL_MS?: string;
   NO_TORSION_FORM_SUBMIT_TARGET?: string;
+  NO_TORSION_MEDIA_SUBMIT_TARGET?: string;
   MOTHER_FORM_SYNC_BATCH_SIZE?: string;
   MOTHER_FORM_SYNC_TIMEOUT_MS?: string;
   NO_TORSION_SITE_URL?: string;

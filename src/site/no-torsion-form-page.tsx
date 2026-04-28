@@ -12,6 +12,7 @@ import {
   SELF_IDENTITY,
   type NoTorsionConfirmResult,
   type NoTorsionFormValues,
+  type NoTorsionMediaSummary,
 } from '../lib/no-torsion-form';
 import { MEDIA_PICKER_CSS, MEDIA_PICKER_SCRIPT } from './media-picker-assets';
 
@@ -76,6 +77,7 @@ type PageTexts = {
   hintDateStart: string;
   hintExperience: string;
   labelHotlineNotice: string;
+  labelHotlineEyebrow: string;
   labelIdentityAgent: string;
   labelIdentitySelf: string;
   labelLanguage: string;
@@ -151,6 +153,7 @@ type PreviewPageState = {
   confirmationToken?: string;
   formAction: string;
   lang: SupportedLanguage;
+  mediaRecords?: NoTorsionMediaSummary[];
   mode: 'confirm' | 'preview';
   values: NoTorsionFormValues;
 };
@@ -176,23 +179,59 @@ type DebugPageState = {
 
 const PAGE_CSS = `
 :root {
-  color-scheme: light dark;
-  --bg: #f8fbff;
-  --surface: rgba(255, 255, 255, 0.56);
-  --surface-strong: rgba(255, 255, 255, 0.72);
-  --border: rgba(81, 111, 164, 0.24);
-  --border-strong: rgba(255, 255, 255, 0.58);
-  --text: #14243d;
-  --muted: rgba(31, 49, 80, 0.72);
-  --accent: #2f6fea;
-  --accent-strong: #174fb8;
-  --accent-soft: rgba(255, 255, 255, 0.62);
-  --danger: #9f2d57;
-  --danger-soft: rgba(255, 232, 241, 0.7);
-  --success: #0c7a62;
-  --success-soft: rgba(222, 255, 244, 0.68);
-  --shadow: 0 28px 80px rgba(95, 116, 172, 0.2);
-  --shadow-soft: 0 16px 44px rgba(95, 116, 172, 0.14);
+  color-scheme: dark light;
+  /* Mirror NCT_frontend styles.css so the embedded form matches the dark
+     glass chrome of the host site. */
+  --bg: #070a18;
+  --bg-soft: #111a32;
+  --card: rgba(12, 20, 43, 0.5);
+  --card-strong: rgba(18, 29, 58, 0.68);
+  --surface: rgba(12, 20, 43, 0.5);
+  --surface-strong: rgba(18, 29, 58, 0.68);
+  --border: rgba(231, 241, 255, 0.2);
+  --border-strong: rgba(255, 255, 255, 0.42);
+  --text: #f2f7ff;
+  --text-muted: rgba(226, 235, 249, 0.74);
+  --text-faint: rgba(226, 235, 249, 0.52);
+  --muted: rgba(226, 235, 249, 0.74);
+
+  --pride-1: #e63a3a;
+  --pride-2: #f29438;
+  --pride-3: #f7c94e;
+  --pride-4: #2da26b;
+  --pride-5: #2f6fea;
+  --pride-6: #8a4fcc;
+  --trans-blue: #5fc3f0;
+  --trans-pink: #ffb1cc;
+  --accent-gradient: linear-gradient(
+    90deg,
+    var(--pride-1) 0%,
+    var(--pride-2) 20%,
+    var(--pride-3) 40%,
+    var(--pride-4) 60%,
+    var(--pride-5) 80%,
+    var(--pride-6) 100%
+  );
+  --accent-gradient-soft: linear-gradient(
+    135deg,
+    rgba(118, 195, 255, 0.94),
+    rgba(255, 149, 210, 0.78)
+  );
+
+  --accent: #6da6ff;
+  --accent-strong: #2f6fea;
+  --accent-soft: rgba(115, 189, 255, 0.18);
+  --accent-secondary: var(--trans-pink);
+  --danger: #ff7aa6;
+  --danger-strong: #c93b73;
+  --danger-soft: rgba(201, 59, 115, 0.18);
+  --success: #34d8a6;
+  --success-strong: #15a37b;
+  --success-soft: rgba(21, 163, 123, 0.18);
+  --warning: #f29438;
+
+  --shadow: 0 28px 90px rgba(0, 0, 0, 0.46);
+  --shadow-soft: 0 18px 52px rgba(0, 0, 0, 0.34);
   --radius-lg: 28px;
   --radius-md: 20px;
   --radius-sm: 14px;
@@ -210,34 +249,22 @@ body {
   margin: 0;
   color: var(--text);
   background:
-    linear-gradient(115deg, rgba(213, 237, 255, 0.96) 0%, rgba(231, 225, 255, 0.86) 45%, rgba(255, 218, 238, 0.96) 100%);
+    radial-gradient(ellipse at 50% 112%, rgba(104, 159, 255, 0.18), transparent 48%),
+    linear-gradient(180deg, #050716 0%, #0a0f29 48%, #170b25 100%);
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   min-height: 100vh;
   overflow-x: hidden;
 }
 
-body::before,
-body::after {
+body::before {
   content: "";
   pointer-events: none;
   position: fixed;
   inset: 0;
   z-index: 0;
-}
-
-body::before {
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.42), transparent 34%),
-    linear-gradient(315deg, rgba(255, 255, 255, 0.34), transparent 38%);
-}
-
-body::after {
-  opacity: 0.36;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.38) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px);
-  background-size: 96px 96px;
-  mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.42) 30%, transparent 100%);
+    linear-gradient(118deg, transparent 18%, rgba(114, 161, 255, 0.12) 37%, rgba(255, 151, 213, 0.1) 50%, rgba(134, 238, 255, 0.1) 63%, transparent 82%);
+  filter: blur(10px);
 }
 
 a {
@@ -280,8 +307,8 @@ button {
   border: 1px solid var(--border);
   border-radius: 999px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.36)),
-    var(--surface);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
+    var(--card);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(26px) saturate(170%);
   -webkit-backdrop-filter: blur(26px) saturate(170%);
@@ -308,25 +335,26 @@ button {
 
 .standalone-language-picker__option:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .standalone-language-picker__option.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: #051121;
+  background: var(--accent-gradient-soft);
 }
 
 .hero,
 .panel,
 .status-card {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.26)),
-    var(--surface);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(28px) saturate(175%);
-  -webkit-backdrop-filter: blur(28px) saturate(175%);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
 }
 
 .hero {
@@ -345,9 +373,9 @@ button {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(115deg, rgba(255, 255, 255, 0.34), transparent 36%),
-    linear-gradient(295deg, rgba(255, 255, 255, 0.22), transparent 42%);
-  opacity: 0.88;
+    linear-gradient(125deg, rgba(255, 255, 255, 0.16), transparent 32%),
+    linear-gradient(305deg, rgba(255, 255, 255, 0.06), transparent 42%);
+  opacity: 0.9;
 }
 
 .hero--form {
@@ -360,9 +388,7 @@ button {
   display: inline-flex;
   padding: 6px 12px;
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.38)),
-    var(--accent-soft);
+  background: var(--accent-soft);
   color: var(--accent);
   font-size: 0.85rem;
   font-weight: 700;
@@ -414,7 +440,8 @@ button {
   grid-column: 1 / -1;
   margin: 10px 0 2px;
   padding-top: 10px;
-  border-top: 1px solid rgba(22, 32, 51, 0.1);
+  border-top: 1px solid var(--border);
+  color: var(--text);
   font-size: 1.25rem;
   line-height: 1.3;
 }
@@ -447,11 +474,27 @@ button {
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.34)),
-    var(--surface-strong);
+  background: rgba(7, 12, 28, 0.45);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(115, 189, 255, 0.22);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.field select option {
+  color: #0b1730;
+  background: #f6f9ff;
 }
 
 .field textarea {
@@ -500,16 +543,16 @@ button {
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(22, 32, 51, 0.12);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .media-preview-frame {
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border-radius: 10px;
-  background: rgba(22, 32, 51, 0.08);
+  background: rgba(7, 12, 28, 0.55);
 }
 
 .media-preview-frame img,
@@ -543,6 +586,86 @@ button {
   color: var(--success);
 }
 
+.media-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.media-progress progress {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.media-progress progress::-webkit-progress-bar {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+}
+
+.media-progress progress::-webkit-progress-value {
+  background: linear-gradient(90deg, #4f8cff, #6f5cff);
+  border-radius: 999px;
+}
+
+.media-progress progress::-moz-progress-bar {
+  background: linear-gradient(90deg, #4f8cff, #6f5cff);
+  border-radius: 999px;
+}
+
+.media-progress__label {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  min-width: 4ch;
+  text-align: right;
+}
+
+.media-summary {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(79, 140, 255, 0.06);
+}
+
+.media-summary__title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.media-summary__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.media-summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.media-summary__item strong {
+  word-break: break-all;
+}
+
+.media-summary__link {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
 .choice-option {
   display: flex;
   align-items: flex-start;
@@ -551,10 +674,14 @@ button {
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.28)),
-    var(--surface);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
   line-height: 1.45;
+}
+
+.choice-option:hover {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .choice-option input {
@@ -574,8 +701,9 @@ button {
   gap: 8px;
   padding: 10px 14px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
+  color: var(--text);
 }
 
 .choice-pill input[type="text"] {
@@ -599,16 +727,61 @@ button {
 }
 
 .hotline-notice {
-  margin: 18px 0 0;
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 24px 0 0;
+  padding: 18px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.3)),
-    rgba(224, 247, 255, 0.5);
-  color: var(--accent);
-  font-weight: 700;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
+    var(--card-strong);
+  color: var(--text);
   line-height: 1.7;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(28px) saturate(175%);
+  -webkit-backdrop-filter: blur(28px) saturate(175%);
+  position: relative;
+  overflow: hidden;
+}
+
+.hotline-notice::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: var(--accent-gradient);
+  opacity: 0.95;
+}
+
+.hotline-notice__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.hotline-notice__label::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(115, 189, 255, 0.18);
+}
+
+.hotline-notice__body {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .button {
@@ -641,10 +814,10 @@ button {
 }
 
 .button--primary {
-  background: linear-gradient(135deg, rgba(104, 172, 255, 0.96), rgba(255, 158, 207, 0.82));
+  background: var(--accent-gradient-soft);
   border-color: var(--border-strong);
   box-shadow: 0 14px 34px rgba(80, 115, 204, 0.24);
-  color: white;
+  color: #0b1730;
 }
 
 .button--secondary {
@@ -739,77 +912,145 @@ ${MEDIA_PICKER_CSS}
     line-height: 1.6;
   }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
+  /* Mirrors the NCT_frontend light-mode block so the embedded JSX form
+     follows the OS theme together with the host page. */
   :root {
-    --bg: #070b18;
-    --surface: rgba(13, 20, 43, 0.5);
-    --surface-strong: rgba(20, 30, 58, 0.66);
-    --border: rgba(225, 238, 255, 0.2);
-    --border-strong: rgba(255, 255, 255, 0.36);
-    --text: #f3f7ff;
-    --muted: rgba(224, 234, 255, 0.72);
-    --accent: #a6ddff;
-    --accent-strong: #72bfff;
-    --accent-soft: rgba(169, 210, 255, 0.14);
-    --danger: #ff9ab9;
-    --danger-soft: rgba(92, 23, 48, 0.56);
-    --success: #8df4ce;
-    --success-soft: rgba(15, 89, 77, 0.46);
-    --shadow: 0 32px 90px rgba(0, 0, 0, 0.45);
-    --shadow-soft: 0 18px 52px rgba(0, 0, 0, 0.32);
+    --bg: #f8fbff;
+    --bg-soft: #f0f5ff;
+    --card: rgba(255, 255, 255, 0.58);
+    --card-strong: rgba(255, 255, 255, 0.78);
+    --surface: rgba(255, 255, 255, 0.58);
+    --surface-strong: rgba(255, 255, 255, 0.78);
+    --border: rgba(82, 109, 164, 0.22);
+    --border-strong: rgba(255, 255, 255, 0.62);
+    --text: #172a47;
+    --text-muted: rgba(23, 42, 71, 0.74);
+    --text-faint: rgba(23, 42, 71, 0.52);
+    --muted: rgba(23, 42, 71, 0.74);
+    --accent: #256de8;
+    --accent-strong: #174fb8;
+    --accent-soft: rgba(37, 109, 232, 0.12);
+    --accent-secondary: #cf4b8f;
+    --danger: #c93b73;
+    --danger-strong: #9f2d57;
+    --danger-soft: rgba(201, 59, 115, 0.12);
+    --success: #15a37b;
+    --success-strong: #0c7a62;
+    --success-soft: rgba(21, 163, 123, 0.14);
+    --shadow: 0 28px 70px rgba(102, 117, 176, 0.19);
+    --shadow-soft: 0 18px 42px rgba(102, 117, 176, 0.14);
   }
 
   body {
     background:
-      radial-gradient(ellipse at 50% 110%, rgba(114, 170, 255, 0.2), transparent 48%),
-      radial-gradient(ellipse at 18% 20%, rgba(154, 107, 255, 0.22), transparent 34%),
-      radial-gradient(ellipse at 78% 24%, rgba(83, 201, 255, 0.16), transparent 30%),
-      linear-gradient(180deg, #060816 0%, #0b1028 46%, #14091f 100%);
+      linear-gradient(115deg, rgba(214, 237, 255, 0.98) 0%, rgba(231, 225, 255, 0.92) 45%, rgba(255, 218, 238, 0.98) 100%);
   }
 
   body::before {
-    background-image:
-      radial-gradient(circle at 7% 14%, rgba(255, 255, 255, 0.9) 0 1px, transparent 1.7px),
-      radial-gradient(circle at 24% 38%, rgba(210, 232, 255, 0.9) 0 1px, transparent 1.6px),
-      radial-gradient(circle at 46% 18%, rgba(255, 255, 255, 0.75) 0 1px, transparent 1.4px),
-      radial-gradient(circle at 64% 62%, rgba(255, 221, 250, 0.8) 0 1px, transparent 1.6px),
-      radial-gradient(circle at 84% 30%, rgba(255, 255, 255, 0.86) 0 1px, transparent 1.5px),
-      radial-gradient(circle at 92% 78%, rgba(178, 214, 255, 0.82) 0 1px, transparent 1.6px);
-    background-size: 220px 220px, 180px 180px, 260px 260px, 210px 210px, 300px 300px, 240px 240px;
-    opacity: 0.72;
-  }
-
-  body::after {
-    opacity: 0.56;
     background:
-      radial-gradient(ellipse at 50% 48%, rgba(185, 212, 255, 0.16), transparent 12%),
-      linear-gradient(118deg, transparent 18%, rgba(125, 178, 255, 0.11) 38%, rgba(255, 175, 220, 0.09) 50%, rgba(151, 247, 255, 0.1) 62%, transparent 82%);
-    mask-image: none;
+      linear-gradient(130deg, rgba(255, 255, 255, 0.38), transparent 36%),
+      linear-gradient(315deg, rgba(255, 255, 255, 0.26), transparent 44%);
+    filter: blur(8px);
   }
 
   .hero,
   .panel,
-  .status-card,
+  .status-card {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.38)),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.32), transparent 42%),
+      var(--card);
+  }
+
   .standalone-language-picker {
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
-      var(--surface);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.52)),
+      rgba(237, 244, 255, 0.86);
+  }
+
+  .standalone-language-picker__option:hover {
+    background: rgba(45, 84, 132, 0.06);
+  }
+
+  .standalone-language-picker__option.is-active {
+    color: #041527;
+    background: linear-gradient(135deg, rgba(115, 185, 255, 0.94), rgba(255, 155, 210, 0.78));
   }
 
   .field input,
   .field select,
   .field textarea {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04)),
-      var(--surface-strong);
+    border-color: rgba(45, 84, 132, 0.14);
+    background: rgba(255, 255, 255, 0.66);
+    color: var(--text);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
+
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 109, 232, 0.18);
+  }
+
+  .field input::placeholder,
+  .field textarea::placeholder {
+    color: var(--text-faint);
+  }
+
+  .field select option {
+    color: var(--text);
+    background: #ffffff;
   }
 
   .choice-option,
   .summary-item,
   .choice-pill,
-  .hotline-notice,
   .button--secondary {
-    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(45, 84, 132, 0.14);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.42)),
+      rgba(255, 255, 255, 0.28);
+    color: var(--text);
+  }
+
+  .choice-option:hover {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.55)),
+      rgba(255, 255, 255, 0.34);
+  }
+
+  .button--primary {
+    color: #041527;
+    background: linear-gradient(135deg, rgba(115, 185, 255, 0.94), rgba(255, 155, 210, 0.78));
+    box-shadow: 0 14px 34px rgba(80, 115, 204, 0.18);
+  }
+
+  .form-section-title {
+    border-top-color: rgba(45, 84, 132, 0.14);
+  }
+
+  .media-preview-card {
+    background: rgba(255, 255, 255, 0.7);
+  }
+
+  .media-preview-frame {
+    background: rgba(22, 32, 51, 0.08);
+  }
+
+  .hotline-notice {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5)),
+      rgba(237, 244, 255, 0.82);
+  }
+
+  .hotline-notice__body {
+    color: var(--text);
+  }
+
+  .map-picker__canvas {
+    background: rgba(255, 255, 255, 0.7);
   }
 }
 
@@ -1086,6 +1327,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入经历，可在经历描述中说明情况',
     hintExperience: '若描述别人经历请在“其它补充”中填写',
+    labelHotlineEyebrow: '紧急援助',
     labelHotlineNotice: '全国统一心理援助：12356；青少年心理咨询和法律援助：12355；希望热线（全国性24小时心理危机干预）：400-161-9995',
     labelIdentityAgent: '受害者的代理人',
     labelIdentitySelf: '受害者本人',
@@ -1197,6 +1439,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入經歷，可在經歷描述中說明情況',
     hintExperience: '若描述別人經歷請在「其它補充」中填寫',
+    labelHotlineEyebrow: '緊急援助',
     labelHotlineNotice: '全國統一心理援助：12356；青少年心理諮詢和法律援助：12355；希望熱線（全國性24小時心理危機干預）：400-161-9995',
     labelIdentityAgent: '受害者的代理人',
     labelIdentitySelf: '受害者本人',
@@ -1308,6 +1551,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     hintDateEnd: 'Leave blank if the person is still there.',
     hintDateStart: 'If there were multiple admissions, describe them in the experience field.',
     hintExperience: 'If describing someone else, add context in Other notes.',
+    labelHotlineEyebrow: 'Crisis support',
     labelHotlineNotice: 'National mental health support: 12356; youth mental health counseling and legal aid: 12355; Hope Hotline (national 24-hour psychological crisis intervention): 400-161-9995.',
     labelIdentityAgent: 'Representative of the survivor',
     labelIdentitySelf: 'Survivor',
@@ -1949,8 +2193,14 @@ function syncQuestionnaireMediaUpload() {
   const fileInput = document.getElementById('questionnaire-media-file');
   const tagInput = document.getElementById('questionnaire-media-tags');
   const status = document.getElementById('questionnaire-media-status');
+  const recordsInput = document.getElementById('questionnaire-media-records');
+  const progressWrap = document.getElementById('questionnaire-media-progress-wrap');
+  const progressBar = document.getElementById('questionnaire-media-progress');
+  const progressLabel = document.getElementById('questionnaire-media-progress-label');
   const mediaPicker = window.createSchoolMediaPicker('questionnaire-media');
-  let mediaSubmittedWithForm = false;
+  const completedRecords = [];
+  const inFlight = new Set();
+  let pendingSubmit = null;
 
   function setStatus(message, isError) {
     if (!status) return;
@@ -1961,6 +2211,27 @@ function syncQuestionnaireMediaUpload() {
 
   function setFileStatus(index, message, isError) {
     mediaPicker.setFileStatus(index, message, isError);
+  }
+
+  function setProgress(done, total) {
+    if (!progressWrap || !progressBar || !progressLabel) return;
+    if (total <= 0) {
+      progressWrap.hidden = true;
+      progressBar.value = 0;
+      progressLabel.textContent = '0%';
+      return;
+    }
+    const pct = Math.round((done / total) * 100);
+    progressWrap.hidden = false;
+    progressBar.max = 100;
+    progressBar.value = pct;
+    progressLabel.textContent = pct + '%';
+  }
+
+  function syncRecordsInput() {
+    if (recordsInput) {
+      recordsInput.value = JSON.stringify(completedRecords);
+    }
   }
 
   function selectedText(selectId) {
@@ -1979,7 +2250,7 @@ function syncQuestionnaireMediaUpload() {
   if (!form || !fileInput) return;
 
   async function uploadFile(file, index, metadata) {
-    setFileStatus(index, '正在上传到后端', false);
+    setFileStatus(index, '正在上传', false);
     const body = new FormData();
     body.append('file', file, file.name);
     body.append('city', metadata.city);
@@ -2001,88 +2272,93 @@ function syncQuestionnaireMediaUpload() {
     return payload.media;
   }
 
-  form.addEventListener('submit', async (event) => {
-    if (mediaSubmittedWithForm || event.defaultPrevented) return;
+  function summarizeMedia(media, sourceFile, tags) {
+    return {
+      id: media.id || ('local-' + Date.now()),
+      fileName: media.fileName || (sourceFile && sourceFile.name) || '',
+      mediaType: media.mediaType || ((sourceFile && sourceFile.type && sourceFile.type.indexOf('video') === 0) ? 'video' : 'image'),
+      contentType: media.contentType || (sourceFile && sourceFile.type) || '',
+      byteSize: typeof media.byteSize === 'number' ? media.byteSize : (sourceFile ? sourceFile.size : 0),
+      publicUrl: media.publicUrl || '',
+      status: media.status || 'pending_review',
+      isR18: Boolean(media.isR18),
+      tags: Array.isArray(tags) ? tags.slice() : [],
+    };
+  }
 
-    const files = mediaPicker.getFiles();
-    if (files.length === 0) return;
-
-    event.preventDefault();
-    if (!form.checkValidity()) {
-      form.reportValidity();
-      return;
-    }
-
+  async function startUpload(file, index) {
     const schoolNameInput = document.querySelector('input[name="school_name"]');
     const addressInput = document.querySelector('input[name="school_address"]');
     const schoolName = schoolNameInput ? schoolNameInput.value.trim() : '';
-    const submitter = event.submitter && event.submitter instanceof HTMLElement
-      ? event.submitter
-      : null;
-    const submitButtons = Array.from(form.querySelectorAll('button[type="submit"]'));
-
     if (!schoolName) {
-      setStatus('请先填写机构名称。', true);
+      setFileStatus(index, '请先填写机构名称', true);
       return;
     }
-    if (files.length === 0) {
-      setStatus('请选择媒体文件。', true);
-      return;
-    }
-
+    const tags = parseTags();
     const metadata = {
       city: selectedText('report-area-city'),
       county: selectedText('report-area-county'),
       province: selectedText('report-area-province'),
       schoolAddress: addressInput ? addressInput.value.trim() : '',
       schoolName,
-      tags: parseTags(),
+      tags,
     };
-
-    let succeeded = 0;
-    let failed = 0;
-    submitButtons.forEach((button) => {
-      button.disabled = true;
-    });
+    const token = Symbol('upload-' + index);
+    inFlight.add(token);
     try {
-      for (const [index, file] of files.entries()) {
-        try {
-          await uploadFile(file, index, metadata);
-          succeeded += 1;
-        } catch (error) {
-          failed += 1;
-          setFileStatus(index, error instanceof Error ? error.message : '上传失败', true);
-        }
-        setStatus('上传进度：' + succeeded + ' 成功，' + failed + ' 失败，合计 ' + files.length + ' 个。', failed > 0);
-      }
-
-      if (failed === 0) {
-        mediaSubmittedWithForm = true;
-        mediaPicker.clear();
-        if (tagInput) tagInput.value = '';
-        setStatus('媒体已提交审核，正在提交问卷。', false);
-        submitButtons.forEach((button) => {
-          button.disabled = false;
-        });
-        if (typeof form.requestSubmit === 'function') {
-          if (submitter) {
-            form.requestSubmit(submitter);
-          } else {
-            form.requestSubmit();
-          }
-        } else {
-          form.submit();
-        }
-        return;
-      }
-      setStatus('上传完成：' + succeeded + ' 成功，' + failed + ' 失败。', failed > 0);
+      const media = await uploadFile(file, index, metadata);
+      completedRecords.push(summarizeMedia(media, file, tags));
+      syncRecordsInput();
+    } catch (error) {
+      setFileStatus(index, error && error.message ? error.message : '上传失败', true);
     } finally {
-      if (!mediaSubmittedWithForm) {
-        submitButtons.forEach((button) => {
-          button.disabled = false;
-        });
+      inFlight.delete(token);
+      const total = completedRecords.length + inFlight.size;
+      setProgress(completedRecords.length, total);
+      if (inFlight.size === 0) {
+        setStatus('媒体上传完成：' + completedRecords.length + ' 个文件已提交审核。', false);
+        if (pendingSubmit) {
+          const submitter = pendingSubmit.submitter;
+          pendingSubmit = null;
+          if (typeof form.requestSubmit === 'function') {
+            if (submitter) {
+              form.requestSubmit(submitter);
+            } else {
+              form.requestSubmit();
+            }
+          } else {
+            form.submit();
+          }
+        }
+      } else {
+        setStatus('上传中：' + completedRecords.length + ' / ' + total, false);
       }
     }
+  }
+
+  if (typeof mediaPicker.setOnSelectionChanged === 'function') {
+    mediaPicker.setOnSelectionChanged(function (entries) {
+      if (!entries || !entries.length) return;
+      const total = completedRecords.length + inFlight.size + entries.length;
+      setProgress(completedRecords.length, total);
+      entries.forEach(function (entry) {
+        startUpload(entry.file, entry.index);
+      });
+    });
+  }
+
+  form.addEventListener('submit', (event) => {
+    if (event.defaultPrevented) return;
+    if (inFlight.size === 0) return;
+    event.preventDefault();
+    if (!form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
+    setStatus('媒体上传仍在进行中，问卷将在所有文件上传完成后自动提交。', false);
+    pendingSubmit = {
+      submitter: event.submitter && event.submitter instanceof HTMLElement ? event.submitter : null,
+    };
   });
 }
 
@@ -2103,6 +2379,56 @@ syncQuestionnaireMediaUpload();
 }
 
 const AREA_SCRIPT = buildAreaScript();
+
+const EMBED_RESIZE_SCRIPT = `
+(function () {
+  if (window.parent === window) return;
+
+  function measure() {
+    var doc = document.documentElement;
+    var body = document.body;
+    return Math.max(
+      doc ? doc.scrollHeight : 0,
+      doc ? doc.offsetHeight : 0,
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0
+    );
+  }
+
+  var lastHeight = 0;
+  function postHeight() {
+    var height = measure();
+    if (Math.abs(height - lastHeight) < 2) return;
+    lastHeight = height;
+    try {
+      window.parent.postMessage({ type: 'nct:embed-resize', height: height }, '*');
+    } catch (_error) {
+      /* parent rejected the message */
+    }
+  }
+
+  document.documentElement.style.overflow = 'hidden';
+  document.body.style.overflow = 'hidden';
+
+  if ('ResizeObserver' in window) {
+    var observer = new ResizeObserver(postHeight);
+    observer.observe(document.documentElement);
+    observer.observe(document.body);
+  }
+
+  if ('MutationObserver' in window) {
+    var mutation = new MutationObserver(postHeight);
+    mutation.observe(document.body, { attributes: true, childList: true, subtree: true });
+  }
+
+  window.addEventListener('load', postHeight);
+  window.addEventListener('resize', postHeight);
+  window.addEventListener('transitionend', postHeight);
+  document.addEventListener('readystatechange', postHeight);
+  setInterval(postHeight, 1500);
+  postHeight();
+})();
+`;
 
 const HtmlDocument: FC<{
   children: unknown;
@@ -2145,12 +2471,13 @@ const HtmlDocument: FC<{
         data-pre-institution-city-placeholder={preInstitutionCityPlaceholder}
       >
         {children}
+        <script dangerouslySetInnerHTML={{ __html: EMBED_RESIZE_SCRIPT }} />
       </body>
     </html>
   );
 };
 
-export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/', lang, token }) => {
+export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) => {
   const texts = getTexts(lang);
   const birthYearOptions = buildBirthYearOptions();
 
@@ -2170,11 +2497,6 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
         <section className="hero hero--form">
           <h1>{texts.pageFormTitle}</h1>
           <p>{texts.helperFormIntro}</p>
-          <div className="actions actions--hero">
-            <a className="button button--secondary" href={homeHref} target="_top">
-              {texts.actionHome}
-            </a>
-          </div>
         </section>
 
         <section className="panel">
@@ -2476,54 +2798,6 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
                 </p>
               </div>
 
-              <div className="field field--full" id="questionnaire-media-panel">
-                <h2 className="form-section-title">{texts.fieldMediaSection}</h2>
-                <p className="field-note">{texts.helperMediaUpload}</p>
-                <div className="inline-grid">
-                  <div className="media-picker-field">
-                    <span className="field__label">{texts.fieldMediaFile}</span>
-                    <button className="media-picker-open-button" id="questionnaire-media-picker-open" type="button">
-                      选择图片 / 视频
-                    </button>
-                    <p className="media-selected-summary" id="questionnaire-media-selected-summary">未选择媒体文件。</p>
-                  </div>
-                  <label>
-                    <span className="field__label">{texts.fieldMediaTags}</span>
-                    <input
-                      id="questionnaire-media-tags"
-                      maxLength={240}
-                      placeholder="r18, 校门, 宿舍"
-                      type="text"
-                    />
-                  </label>
-                </div>
-                <div className="media-preview-grid" hidden id="questionnaire-media-preview-list" />
-                <p className="field-note" hidden id="questionnaire-media-status" />
-                <div className="media-picker-modal" hidden id="questionnaire-media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="questionnaire-media-picker-title">
-                  <div className="media-picker-backdrop" data-media-picker-close="true" />
-                  <section className="media-picker-panel">
-                    <div className="media-picker-header">
-                      <h2 id="questionnaire-media-picker-title">选择学校媒体</h2>
-                      <button aria-label="关闭" className="media-picker-close" id="questionnaire-media-picker-close" type="button">×</button>
-                    </div>
-                    <div className="media-picker-body">
-                      <div className="media-picker-dropzone" id="questionnaire-media-picker-dropzone">
-                        <strong>拖拽图片或视频到这里</strong>
-                        <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
-                        <button className="media-picker-secondary" id="questionnaire-media-picker-choose" type="button">选择文件</button>
-                        <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" hidden id="questionnaire-media-file" multiple type="file" />
-                      </div>
-                      <p className="media-picker-message" id="questionnaire-media-picker-message">拖拽文件到此处，或点击选择文件。</p>
-                      <div className="media-preview-grid" hidden id="questionnaire-media-picker-draft-list" />
-                    </div>
-                    <div className="media-picker-footer">
-                      <button className="media-picker-secondary" id="questionnaire-media-picker-cancel" type="button">取消</button>
-                      <button className="media-picker-confirm" id="questionnaire-media-picker-confirm" type="button">确定</button>
-                    </div>
-                  </section>
-                </div>
-              </div>
-
               <div className="field">
                 <span className="field__label">{texts.fieldContact}</span>
                 <input maxLength={30} name="contact_information" placeholder={texts.placeholderContact} required type="text" />
@@ -2570,6 +2844,59 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
                 <span className="field__label">{texts.fieldOther}</span>
                 <textarea maxLength={3000} name="other" placeholder={texts.placeholderTextBlock} />
               </div>
+
+              <div className="field field--full" id="questionnaire-media-panel">
+                <h2 className="form-section-title">{texts.fieldMediaSection}</h2>
+                <p className="field-note">{texts.helperMediaUpload}</p>
+                <div className="inline-grid">
+                  <div className="media-picker-field">
+                    <span className="field__label">{texts.fieldMediaFile}</span>
+                    <button className="media-picker-open-button" id="questionnaire-media-picker-open" type="button">
+                      选择图片 / 视频
+                    </button>
+                    <p className="media-selected-summary" id="questionnaire-media-selected-summary">未选择媒体文件。</p>
+                  </div>
+                  <label>
+                    <span className="field__label">{texts.fieldMediaTags}</span>
+                    <input
+                      id="questionnaire-media-tags"
+                      maxLength={240}
+                      placeholder="r18, 校门, 宿舍"
+                      type="text"
+                    />
+                  </label>
+                </div>
+                <div className="media-progress" hidden id="questionnaire-media-progress-wrap">
+                  <progress id="questionnaire-media-progress" max={100} value={0} />
+                  <span className="media-progress__label" id="questionnaire-media-progress-label">0%</span>
+                </div>
+                <div className="media-preview-grid" hidden id="questionnaire-media-preview-list" />
+                <p className="field-note" hidden id="questionnaire-media-status" />
+                <input id="questionnaire-media-records" name="media_records" type="hidden" value="[]" />
+                <div className="media-picker-modal" hidden id="questionnaire-media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="questionnaire-media-picker-title">
+                  <div className="media-picker-backdrop" data-media-picker-close="true" />
+                  <section className="media-picker-panel">
+                    <div className="media-picker-header">
+                      <h2 id="questionnaire-media-picker-title">选择学校媒体</h2>
+                      <button aria-label="关闭" className="media-picker-close" id="questionnaire-media-picker-close" type="button">×</button>
+                    </div>
+                    <div className="media-picker-body">
+                      <div className="media-picker-dropzone" id="questionnaire-media-picker-dropzone">
+                        <strong>拖拽图片或视频到这里</strong>
+                        <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
+                        <button className="media-picker-secondary" id="questionnaire-media-picker-choose" type="button">选择文件</button>
+                        <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" hidden id="questionnaire-media-file" multiple type="file" />
+                      </div>
+                      <p className="media-picker-message" id="questionnaire-media-picker-message">拖拽文件到此处，或点击选择文件。</p>
+                      <div className="media-preview-grid" hidden id="questionnaire-media-picker-draft-list" />
+                    </div>
+                    <div className="media-picker-footer">
+                      <button className="media-picker-secondary" id="questionnaire-media-picker-cancel" type="button">取消</button>
+                      <button className="media-picker-confirm" id="questionnaire-media-picker-confirm" type="button">确定</button>
+                    </div>
+                  </section>
+                </div>
+              </div>
             </div>
             <div className="actions">
               <button className="button button--primary" type="submit">{texts.actionSubmit}</button>
@@ -2577,7 +2904,10 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
           </form>
         </section>
 
-        <p className="hotline-notice">{texts.labelHotlineNotice}</p>
+        <aside className="hotline-notice" role="note" aria-label={texts.labelHotlineEyebrow}>
+          <span className="hotline-notice__label">{texts.labelHotlineEyebrow}</span>
+          <p className="hotline-notice__body">{texts.labelHotlineNotice}</p>
+        </aside>
       </main>
 
       <script
@@ -2593,12 +2923,53 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ homeHref = '/',
   );
 };
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 100 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+const MediaSummaryBlock: FC<{
+  heading: string;
+  items: NoTorsionMediaSummary[];
+}> = ({ heading, items }) => {
+  if (!items.length) return null;
+  return (
+    <div className="media-summary">
+      <h3 className="media-summary__title">{heading}</h3>
+      <ul className="media-summary__list">
+        {items.map((item) => (
+          <li className="media-summary__item" key={item.id}>
+            <strong>{item.fileName}</strong>
+            <span>
+              {item.mediaType === 'video' ? '视频' : '图片'} · {formatBytes(item.byteSize)} · {item.status}
+              {item.isR18 ? ' · R18' : ''}
+            </span>
+            {item.publicUrl ? (
+              <a className="media-summary__link" href={item.publicUrl} rel="noreferrer" target="_blank">
+                {item.publicUrl}
+              </a>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
 export const NoTorsionStandalonePreviewPage: FC<PreviewPageState> = ({
   backHref,
   confirmationPayload,
   confirmationToken,
   formAction,
   lang,
+  mediaRecords,
   mode,
   values,
 }) => {
@@ -2628,6 +2999,8 @@ export const NoTorsionStandalonePreviewPage: FC<PreviewPageState> = ({
               </div>
             ))}
           </div>
+
+          <MediaSummaryBlock heading={texts.fieldMediaSection} items={mediaRecords ?? []} />
 
           <div className="actions">
             <a className="button button--secondary" href={backHref}>{texts.actionBack}</a>
@@ -2693,6 +3066,8 @@ export const NoTorsionStandaloneResultPage: FC<ResultPageState> = ({
               );
             })}
           </div>
+
+          <MediaSummaryBlock heading={texts.fieldMediaSection} items={result.mediaRecords ?? []} />
 
           <div className="actions">
             <a className="button button--secondary" href={backHref}>{texts.actionBack}</a>

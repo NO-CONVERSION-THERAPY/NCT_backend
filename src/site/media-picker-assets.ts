@@ -329,10 +329,27 @@ export const MEDIA_PICKER_SCRIPT = `
       clearUrls(draftPreviewUrls);
     }
 
+    let lastConfirmedSnapshotKeys = [];
+    let onSelectionChanged = null;
+
     function confirmPicker() {
+      const previousKeys = lastConfirmedSnapshotKeys;
       selectedFiles = draftFiles.slice();
       renderSelectedPreviews();
       closePicker();
+
+      const nextKeys = selectedFiles.map(mediaFileKey);
+      lastConfirmedSnapshotKeys = nextKeys;
+      const previousSet = new Set(previousKeys);
+      const addedEntries = [];
+      selectedFiles.forEach(function (file, index) {
+        if (!previousSet.has(nextKeys[index])) {
+          addedEntries.push({ file: file, index: index });
+        }
+      });
+      if (addedEntries.length && typeof onSelectionChanged === 'function') {
+        onSelectionChanged(addedEntries);
+      }
     }
 
     function applyPanelOffset() {
@@ -442,6 +459,7 @@ export const MEDIA_PICKER_SCRIPT = `
       clear: function () {
         selectedFiles = [];
         draftFiles = [];
+        lastConfirmedSnapshotKeys = [];
         renderSelectedPreviews();
         renderDraftPreviews();
       },
@@ -454,6 +472,9 @@ export const MEDIA_PICKER_SCRIPT = `
         if (!node) return;
         node.textContent = text;
         node.dataset.state = isError ? 'error' : 'ok';
+      },
+      setOnSelectionChanged: function (callback) {
+        onSelectionChanged = typeof callback === 'function' ? callback : null;
       }
     };
   };

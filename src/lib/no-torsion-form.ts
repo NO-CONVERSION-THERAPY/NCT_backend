@@ -170,9 +170,22 @@ export type NoTorsionCorrectionValues = {
   submittedFields: JsonObject;
 };
 
+export type NoTorsionMediaSummary = {
+  id: string;
+  fileName: string;
+  mediaType: 'image' | 'video';
+  contentType: string;
+  byteSize: number;
+  publicUrl: string;
+  status: string;
+  isR18: boolean;
+  tags: string[];
+};
+
 export type NoTorsionFormPrepareResult =
   | {
       encodedPayload: string;
+      mediaRecords: NoTorsionMediaSummary[];
       mode: 'preview';
       values: NoTorsionFormValues;
     }
@@ -180,18 +193,21 @@ export type NoTorsionFormPrepareResult =
       confirmationPayload: string;
       confirmationToken: string;
       encodedPayload: string;
+      mediaRecords: NoTorsionMediaSummary[];
       mode: 'confirm';
       values: NoTorsionFormValues;
     };
 
 type NoTorsionFormConfirmationState = {
   encodedPayload: string;
+  mediaRecords?: NoTorsionMediaSummary[];
   requestContext: NoTorsionRequestContext;
   submissionValues: NoTorsionFormValues;
 };
 
 export type NoTorsionConfirmResult = {
   encodedPayload: string;
+  mediaRecords: NoTorsionMediaSummary[];
   resultsByTarget: Record<ActualSubmitTarget, SubmissionTargetResult>;
   successfulTargets: ActualSubmitTarget[];
 };
@@ -1130,12 +1146,43 @@ function decodeConfirmationPayload(
 
   return {
     encodedPayload: parsedPayload.encodedPayload,
+    mediaRecords: Array.isArray(parsedPayload.mediaRecords)
+      ? (parsedPayload.mediaRecords as NoTorsionMediaSummary[])
+      : [],
     requestContext:
       parsedPayload.requestContext && typeof parsedPayload.requestContext === 'object'
         ? parsedPayload.requestContext
         : {},
     submissionValues: parsedPayload.submissionValues as NoTorsionFormValues,
   };
+}
+
+function parseMediaRecords(value: unknown): NoTorsionMediaSummary[] {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === 'object' && !Array.isArray(item),
+      )
+      .map((item): NoTorsionMediaSummary => ({
+        id: typeof item.id === 'string' ? item.id : '',
+        fileName: typeof item.fileName === 'string' ? item.fileName : '',
+        mediaType: item.mediaType === 'video' ? 'video' : 'image',
+        contentType: typeof item.contentType === 'string' ? item.contentType : '',
+        byteSize: typeof item.byteSize === 'number' ? item.byteSize : 0,
+        publicUrl: typeof item.publicUrl === 'string' ? item.publicUrl : '',
+        status: typeof item.status === 'string' ? item.status : 'unknown',
+        isR18: Boolean(item.isR18),
+        tags: Array.isArray(item.tags)
+          ? (item.tags as unknown[]).filter((tag): tag is string => typeof tag === 'string')
+          : [],
+      }))
+      .filter((entry) => entry.id && entry.fileName);
+  } catch {
+    return [];
+  }
 }
 
 function encodeConfirmationPayload(
@@ -1838,9 +1885,12 @@ export async function prepareNoTorsionFormSubmission(
     buildGoogleFormFields(validationResult.values),
   );
 
+  const mediaRecords = parseMediaRecords(options.body.media_records);
+
   if (getFormDryRun(env)) {
     return {
       encodedPayload,
+      mediaRecords,
       mode: 'preview',
       values: validationResult.values,
     };
@@ -1848,6 +1898,7 @@ export async function prepareNoTorsionFormSubmission(
 
   const confirmationPayload = encodeConfirmationPayload({
     encodedPayload,
+    mediaRecords,
     requestContext: options.requestContext ?? {},
     submissionValues: validationResult.values,
   });
@@ -1860,6 +1911,7 @@ export async function prepareNoTorsionFormSubmission(
     confirmationPayload,
     confirmationToken,
     encodedPayload,
+    mediaRecords,
     mode: 'confirm',
     values: validationResult.values,
   };
@@ -1932,6 +1984,7 @@ export async function confirmNoTorsionFormSubmission(
 
   return {
     encodedPayload: decodedPayload.encodedPayload,
+    mediaRecords: decodedPayload.mediaRecords ?? [],
     resultsByTarget,
     successfulTargets,
   };

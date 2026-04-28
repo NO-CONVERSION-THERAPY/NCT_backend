@@ -150,22 +150,19 @@ async function translateWithGoogleCloud(
     1000,
     Number(env.TRANSLATION_PROVIDER_TIMEOUT_MS ?? '10000'),
   );
-  const response = await fetch(
-    'https://translation.googleapis.com/language/translate/v2',
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        format: 'text',
-        q: texts,
-        target: targetLanguage,
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
+  const endpoint = `https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
     },
-  );
+    body: JSON.stringify({
+      format: 'text',
+      q: texts,
+      target: targetLanguage,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   const responseBody = await parseProviderJsonResponse(response);
 
   if (!response.ok) {

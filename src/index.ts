@@ -507,6 +507,7 @@ function buildStandaloneHomeHref(
 function buildStandaloneFailureResult(message: string): NoTorsionConfirmResult {
   return {
     encodedPayload: '',
+    mediaRecords: [],
     resultsByTarget: {
       d1: {
         error: message,
@@ -528,6 +529,7 @@ function isDebugMode(env: Env): boolean {
 function buildDebugSuccessResult(): NoTorsionConfirmResult {
   return {
     encodedPayload: 'entry.debug=success',
+    mediaRecords: [],
     resultsByTarget: {
       d1: {
         ok: true,
@@ -684,6 +686,7 @@ async function handleNoTorsionStandaloneFormSubmission(
             result.mode === 'confirm' ? result.confirmationToken : undefined,
           formAction: buildStandaloneFormConfirmHref(language),
           lang: language,
+          mediaRecords: result.mediaRecords,
           mode: result.mode,
           values: result.values
         })

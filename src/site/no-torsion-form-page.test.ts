@@ -141,9 +141,11 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('Experience');
     expect(html).toContain('Select a province first');
     expect(html).toContain('"code":"110000"');
-    expect(html).toContain("form.addEventListener('submit', async (event) => {");
-    expect(html).toContain('媒体已提交审核，正在提交问卷。');
+    expect(html).toContain("form.addEventListener('submit', (event) => {");
+    expect(html).toContain('媒体上传仍在进行中');
     expect(html).toContain('id="questionnaire-media-picker-open"');
+    expect(html).toContain('name="media_records"');
+    expect(html).toContain('id="questionnaire-media-progress"');
     expect(html).not.toContain('id="questionnaire-media-upload"');
     expect(html).not.toContain('name="questionnaire_media_r18"');
   });
@@ -165,8 +167,9 @@ describe('No-Torsion standalone JSX pages', () => {
       '全国统一心理援助：12356；青少年心理咨询和法律援助：12355；希望热线（全国性24小时心理危机干预）：400-161-9995',
     );
     expect(html).toContain('坐标（纬度, 经度）');
-    expect(html).toContain('返回主页');
-    expect(html).toContain('target="_top"');
+    expect(html).not.toContain('返回主页');
+    expect(html).toContain('class="hotline-notice__label"');
+    expect(html).toContain('紧急援助');
     expect(html).toContain('class="standalone-language-picker__option is-active"');
     expect(html).toContain('href="/form?lang=zh-TW"');
   });
@@ -222,6 +225,7 @@ describe('No-Torsion standalone JSX pages', () => {
   it('renders success and failure result cards from the JSX result page', () => {
     const result: NoTorsionConfirmResult = {
       encodedPayload: 'encoded',
+      mediaRecords: [],
       resultsByTarget: {
         d1: {
           ok: true,
