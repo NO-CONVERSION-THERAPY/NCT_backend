@@ -1,5 +1,6 @@
 interface Env {
   DB: D1Database;
+  MEDIA_BUCKET?: R2Bucket;
   APP_NAME?: string;
   B2_APPLICATION_KEY?: string;
   B2_APPLICATION_KEY_ID?: string;

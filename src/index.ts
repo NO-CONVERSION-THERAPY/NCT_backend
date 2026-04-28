@@ -983,6 +983,86 @@ app.get('/api/media/tags', async (context) => {
   }
 });
 
+app.get('/api/media/files/*', async (context) => {
+  try {
+    if (!context.env.MEDIA_BUCKET) {
+      return context.json(
+        {
+          error: 'R2 media bucket is not configured.',
+        },
+        500,
+      );
+    }
+
+    const prefix = '/api/media/files/';
+    const pathname = new URL(context.req.raw.url).pathname;
+    const encodedObjectKey = pathname.startsWith(prefix)
+      ? pathname.slice(prefix.length)
+      : '';
+    if (!encodedObjectKey) {
+      return context.json(
+        {
+          error: 'Media file key is required.',
+        },
+        400,
+      );
+    }
+
+    let objectKey: string;
+    try {
+      objectKey = decodeURIComponent(encodedObjectKey);
+    } catch {
+      return context.json(
+        {
+          error: 'Media file key is invalid.',
+        },
+        400,
+      );
+    }
+
+    if (
+      !objectKey.startsWith('media/')
+      || objectKey.startsWith('/')
+      || objectKey.includes('\\')
+      || objectKey.split('/').some((segment) => segment === '..')
+    ) {
+      return context.json(
+        {
+          error: 'Media file key is invalid.',
+        },
+        400,
+      );
+    }
+
+    const object = await context.env.MEDIA_BUCKET.get(objectKey);
+    if (!object) {
+      return context.json(
+        {
+          error: 'Media file was not found.',
+        },
+        404,
+      );
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('cache-control', headers.get('cache-control') ?? 'public, max-age=31536000, immutable');
+    headers.set('content-type', headers.get('content-type') ?? 'application/octet-stream');
+    headers.set('etag', object.httpEtag);
+
+    return new Response(object.body, {
+      headers,
+    });
+  } catch (error) {
+    return context.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to read media file.',
+      },
+      500,
+    );
+  }
+});
+
 app.post('/api/media/uploads/presign', async (context) => {
   try {
     return context.json(await createMediaUpload(context.env, await context.req.json()));

@@ -8,6 +8,7 @@ describe('MediaUploadPage', () => {
 
     expect(html).toContain('media-picker-file-label');
     expect(html).toMatch(/<input(?=[^>]*id="media-file")(?![^>]*hidden)[^>]*>/);
+    expect(html).toContain('data-empty-summary="未选择媒体文件。"');
     expect(html).not.toContain('fileInput.click()');
   });
 

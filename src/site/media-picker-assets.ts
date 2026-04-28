@@ -256,6 +256,18 @@ export const MEDIA_PICKER_SCRIPT = `
       return file && (file.type.startsWith('image/') || file.type.startsWith('video/'));
     }
 
+    function getPickerText(name, fallback) {
+      return (dialog && dialog.dataset && dialog.dataset[name]) || fallback;
+    }
+
+    function formatPickerText(name, fallback, values) {
+      let text = getPickerText(name, fallback);
+      Object.keys(values || {}).forEach(function (key) {
+        text = text.replace(new RegExp('\\\\{' + key + '\\\\}', 'g'), String(values[key]));
+      });
+      return text;
+    }
+
     function clearUrls(urls) {
       while (urls.length) {
         URL.revokeObjectURL(urls.pop());
@@ -295,7 +307,7 @@ export const MEDIA_PICKER_SCRIPT = `
         const remove = document.createElement('button');
         remove.className = 'media-remove-button';
         remove.type = 'button';
-        remove.textContent = '移除';
+        remove.textContent = getPickerText('removeLabel', 'Remove');
         remove.addEventListener('click', function () {
           draftFiles.splice(index, 1);
           renderDraftPreviews();
@@ -304,7 +316,7 @@ export const MEDIA_PICKER_SCRIPT = `
       } else {
         const itemStatus = document.createElement('span');
         itemStatus.className = 'media-preview-status';
-        itemStatus.textContent = '待上传';
+        itemStatus.textContent = getPickerText('pendingStatus', 'Waiting to upload');
         meta.appendChild(itemStatus);
       }
 
@@ -319,8 +331,10 @@ export const MEDIA_PICKER_SCRIPT = `
       previewList.hidden = selectedFiles.length === 0;
       if (selectedSummary) {
         selectedSummary.textContent = selectedFiles.length
-          ? '已选择 ' + selectedFiles.length + ' 个媒体文件，可继续添加或删除。'
-          : '未选择媒体文件。';
+          ? formatPickerText('selectedSummary', '{count} media file(s) selected. You can add or remove files.', {
+              count: selectedFiles.length
+            })
+          : getPickerText('emptySummary', 'No media selected.');
       }
       selectedFiles.forEach(function (file, index) {
         const url = URL.createObjectURL(file);
@@ -336,8 +350,10 @@ export const MEDIA_PICKER_SCRIPT = `
       draftList.hidden = draftFiles.length === 0;
       if (message) {
         message.textContent = draftFiles.length
-          ? '已暂存 ' + draftFiles.length + ' 个文件，确认后写入上传列表。'
-          : '拖拽文件到此处，或点击选择文件。';
+          ? formatPickerText('draftSummary', '{count} file(s) staged. Confirm to add them to the upload list.', {
+              count: draftFiles.length
+            })
+          : getPickerText('draftEmptyMessage', 'Drop files here, or choose files.');
       }
       draftFiles.forEach(function (file, index) {
         const url = URL.createObjectURL(file);
@@ -362,7 +378,9 @@ export const MEDIA_PICKER_SCRIPT = `
       });
       renderDraftPreviews();
       if (message && rejected > 0) {
-        message.textContent = '已忽略 ' + rejected + ' 个不支持的文件。';
+        message.textContent = formatPickerText('rejectedMessage', 'Ignored {count} unsupported file(s).', {
+          count: rejected
+        });
       }
     }
 

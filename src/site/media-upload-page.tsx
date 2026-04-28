@@ -304,7 +304,21 @@ export const MediaUploadPage: FC = () => (
           <div className="media-preview-grid" hidden id="media-preview-list" />
           <p className="status" id="media-status" />
         </form>
-        <div className="media-picker-modal" hidden id="media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="media-picker-title">
+        <div
+          className="media-picker-modal"
+          data-draft-empty-message="拖拽文件到此处，或点击选择文件。"
+          data-draft-summary="已暂存 {count} 个文件，确认后写入上传列表。"
+          data-empty-summary="未选择媒体文件。"
+          data-pending-status="待上传"
+          data-rejected-message="已忽略 {count} 个不支持的文件。"
+          data-remove-label="移除"
+          data-selected-summary="已选择 {count} 个媒体文件，可继续添加或删除。"
+          hidden
+          id="media-picker-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="media-picker-title"
+        >
           <div className="media-picker-backdrop" data-media-picker-close="true" />
           <section className="media-picker-panel">
             <div className="media-picker-header">
