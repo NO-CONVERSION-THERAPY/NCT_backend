@@ -143,6 +143,28 @@ export const MEDIA_PICKER_CSS = `
   color: #172033;
 }
 
+.media-picker-file-label {
+  position: relative;
+}
+
+.media-picker-file-label:focus-within {
+  outline: 2px solid rgba(29, 78, 216, 0.58);
+  outline-offset: 2px;
+}
+
+.media-picker-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
 .media-picker-confirm {
   min-height: 42px;
   padding: 11px 18px;
@@ -161,6 +183,34 @@ export const MEDIA_PICKER_CSS = `
 body.media-picker-open {
   overflow: hidden;
 }
+
+@media (max-width: 640px) {
+  .media-picker-modal {
+    align-items: stretch;
+    justify-items: stretch;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .media-picker-panel {
+    width: 100%;
+    max-height: calc(100dvh - max(20px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom))));
+    border-radius: 12px;
+  }
+
+  .media-picker-header,
+  .media-picker-footer {
+    padding: 14px 16px;
+  }
+
+  .media-picker-body {
+    padding: 14px 16px;
+  }
+
+  .media-picker-dropzone {
+    min-height: 150px;
+    padding: 18px 14px;
+  }
+}
 `;
 
 export const MEDIA_PICKER_SCRIPT = `
@@ -173,7 +223,6 @@ export const MEDIA_PICKER_SCRIPT = `
     const selectedSummary = document.getElementById(prefix + '-selected-summary');
     const openButton = document.getElementById(prefix + '-picker-open');
     const dialog = document.getElementById(prefix + '-picker-dialog');
-    const chooseButton = document.getElementById(prefix + '-picker-choose');
     const confirmButton = document.getElementById(prefix + '-picker-confirm');
     const cancelButton = document.getElementById(prefix + '-picker-cancel');
     const closeButton = document.getElementById(prefix + '-picker-close');
@@ -409,7 +458,6 @@ export const MEDIA_PICKER_SCRIPT = `
     }
 
     if (openButton) openButton.addEventListener('click', openPicker);
-    if (chooseButton && fileInput) chooseButton.addEventListener('click', function () { fileInput.click(); });
     if (confirmButton) confirmButton.addEventListener('click', confirmPicker);
     if (cancelButton) cancelButton.addEventListener('click', closePicker);
     if (closeButton) closeButton.addEventListener('click', closePicker);

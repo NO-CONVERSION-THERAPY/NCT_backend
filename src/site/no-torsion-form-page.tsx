@@ -345,6 +345,7 @@ button {
 
 .hero,
 .panel,
+.hotline-notice,
 .status-card {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
@@ -727,61 +728,33 @@ button {
 }
 
 .hotline-notice {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 24px 0 0;
-  padding: 18px 22px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
-    var(--card-strong);
+  display: grid;
+  gap: 10px;
+  margin: 20px 0 0;
+  padding: 18px 20px;
   color: var(--text);
   line-height: 1.7;
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(28px) saturate(175%);
-  -webkit-backdrop-filter: blur(28px) saturate(175%);
-  position: relative;
-  overflow: hidden;
-}
-
-.hotline-notice::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  background: var(--accent-gradient);
-  opacity: 0.95;
 }
 
 .hotline-notice__label {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-}
-
-.hotline-notice__label::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: max-content;
+  max-width: 100%;
+  padding: 6px 12px;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(115, 189, 255, 0.18);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .hotline-notice__body {
   margin: 0;
   font-weight: 600;
-  color: var(--text);
+  color: var(--muted);
 }
 
 .button {
@@ -956,6 +929,7 @@ ${MEDIA_PICKER_CSS}
 
   .hero,
   .panel,
+  .hotline-notice,
   .status-card {
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.38)),
@@ -1039,16 +1013,6 @@ ${MEDIA_PICKER_CSS}
     background: rgba(22, 32, 51, 0.08);
   }
 
-  .hotline-notice {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5)),
-      rgba(237, 244, 255, 0.82);
-  }
-
-  .hotline-notice__body {
-    color: var(--text);
-  }
-
   .map-picker__canvas {
     background: rgba(255, 255, 255, 0.7);
   }
@@ -1061,7 +1025,8 @@ ${MEDIA_PICKER_CSS}
   }
 
   .hero,
-  .panel {
+  .panel,
+  .hotline-notice {
     padding: 20px;
   }
 
@@ -2884,8 +2849,10 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) 
                       <div className="media-picker-dropzone" id="questionnaire-media-picker-dropzone">
                         <strong>拖拽图片或视频到这里</strong>
                         <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
-                        <button className="media-picker-secondary" id="questionnaire-media-picker-choose" type="button">选择文件</button>
-                        <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" hidden id="questionnaire-media-file" multiple type="file" />
+                        <label className="media-picker-secondary media-picker-file-label" id="questionnaire-media-picker-choose">
+                          选择文件
+                          <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" className="media-picker-file-input" id="questionnaire-media-file" multiple type="file" />
+                        </label>
                       </div>
                       <p className="media-picker-message" id="questionnaire-media-picker-message">拖拽文件到此处，或点击选择文件。</p>
                       <div className="media-preview-grid" hidden id="questionnaire-media-picker-draft-list" />

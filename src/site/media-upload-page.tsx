@@ -315,8 +315,10 @@ export const MediaUploadPage: FC = () => (
               <div className="media-picker-dropzone" id="media-picker-dropzone">
                 <strong>拖拽图片或视频到这里</strong>
                 <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
-                <button className="media-picker-secondary" id="media-picker-choose" type="button">选择文件</button>
-                <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" hidden id="media-file" multiple type="file" />
+                <label className="media-picker-secondary media-picker-file-label" id="media-picker-choose">
+                  选择文件
+                  <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" className="media-picker-file-input" id="media-file" multiple type="file" />
+                </label>
               </div>
               <p className="media-picker-message" id="media-picker-message">拖拽文件到此处，或点击选择文件。</p>
               <div className="media-preview-grid" hidden id="media-picker-draft-list" />
