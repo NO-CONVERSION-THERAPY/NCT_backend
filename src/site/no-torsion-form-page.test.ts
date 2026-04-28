@@ -146,6 +146,10 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('id="questionnaire-media-picker-open"');
     expect(html).toContain('media-picker-file-label');
     expect(html).toMatch(/<input(?=[^>]*id="questionnaire-media-file")(?![^>]*hidden)[^>]*>/);
+    expect(html).toContain('form.elements.namedItem');
+    expect(html).toContain("getFormValue('school_name')");
+    expect(html).toContain('waitingForSchoolName');
+    expect(html).toContain('填写后会自动上传');
     expect(html).toContain('name="media_records"');
     expect(html).toContain('id="questionnaire-media-progress"');
     expect(html).not.toContain('id="questionnaire-media-upload"');

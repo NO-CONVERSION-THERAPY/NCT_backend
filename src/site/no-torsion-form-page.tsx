@@ -2165,6 +2165,7 @@ function syncQuestionnaireMediaUpload() {
   const mediaPicker = window.createSchoolMediaPicker('questionnaire-media');
   const completedRecords = [];
   const inFlight = new Set();
+  const waitingForSchoolName = [];
   let pendingSubmit = null;
 
   function setStatus(message, isError) {
@@ -2214,6 +2215,44 @@ function syncQuestionnaireMediaUpload() {
 
   if (!form || !fileInput) return;
 
+  function getNamedField(name) {
+    const named = form.elements && form.elements.namedItem ? form.elements.namedItem(name) : null;
+    if (named && typeof named.value !== 'undefined') return named;
+    return form.querySelector('[name="' + name + '"]');
+  }
+
+  function getFormValue(name) {
+    const field = getNamedField(name);
+    return field && typeof field.value !== 'undefined' ? String(field.value || '').trim() : '';
+  }
+
+  function getSchoolName() {
+    return getFormValue('school_name') || getFormValue('schoolName');
+  }
+
+  function getSchoolAddress() {
+    return getFormValue('school_address') || getFormValue('schoolAddress');
+  }
+
+  function queueUntilSchoolName(file, index) {
+    const exists = waitingForSchoolName.some((entry) => entry.file === file && entry.index === index);
+    if (!exists) {
+      waitingForSchoolName.push({ file, index });
+    }
+    setFileStatus(index, '请先填写机构名称，填写后会自动上传', true);
+    setStatus('请先填写机构名称，已选择的媒体会在填写后自动上传。', true);
+    setProgress(completedRecords.length, completedRecords.length + inFlight.size + waitingForSchoolName.length);
+  }
+
+  function flushWaitingForSchoolName() {
+    if (!getSchoolName() || waitingForSchoolName.length === 0) return;
+    const entries = waitingForSchoolName.splice(0);
+    setProgress(completedRecords.length, completedRecords.length + inFlight.size + entries.length);
+    entries.forEach((entry) => {
+      startUpload(entry.file, entry.index);
+    });
+  }
+
   async function uploadFile(file, index, metadata) {
     setFileStatus(index, '正在上传', false);
     const body = new FormData();
@@ -2252,11 +2291,9 @@ function syncQuestionnaireMediaUpload() {
   }
 
   async function startUpload(file, index) {
-    const schoolNameInput = document.querySelector('input[name="school_name"]');
-    const addressInput = document.querySelector('input[name="school_address"]');
-    const schoolName = schoolNameInput ? schoolNameInput.value.trim() : '';
+    const schoolName = getSchoolName();
     if (!schoolName) {
-      setFileStatus(index, '请先填写机构名称', true);
+      queueUntilSchoolName(file, index);
       return;
     }
     const tags = parseTags();
@@ -2264,7 +2301,7 @@ function syncQuestionnaireMediaUpload() {
       city: selectedText('report-area-city'),
       county: selectedText('report-area-county'),
       province: selectedText('report-area-province'),
-      schoolAddress: addressInput ? addressInput.value.trim() : '',
+      schoolAddress: getSchoolAddress(),
       schoolName,
       tags,
     };
@@ -2310,6 +2347,12 @@ function syncQuestionnaireMediaUpload() {
         startUpload(entry.file, entry.index);
       });
     });
+  }
+
+  const schoolNameField = getNamedField('school_name') || getNamedField('schoolName');
+  if (schoolNameField && typeof schoolNameField.addEventListener === 'function') {
+    schoolNameField.addEventListener('input', flushWaitingForSchoolName);
+    schoolNameField.addEventListener('change', flushWaitingForSchoolName);
   }
 
   form.addEventListener('submit', (event) => {
