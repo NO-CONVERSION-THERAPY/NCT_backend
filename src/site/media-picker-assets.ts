@@ -223,6 +223,9 @@ export const MEDIA_PICKER_SCRIPT = `
     const selectedSummary = document.getElementById(prefix + '-selected-summary');
     const openButton = document.getElementById(prefix + '-picker-open');
     const dialog = document.getElementById(prefix + '-picker-dialog');
+    if (dialog && dialog.parentElement !== document.body) {
+      document.body.appendChild(dialog);
+    }
     const confirmButton = document.getElementById(prefix + '-picker-confirm');
     const cancelButton = document.getElementById(prefix + '-picker-cancel');
     const closeButton = document.getElementById(prefix + '-picker-close');
