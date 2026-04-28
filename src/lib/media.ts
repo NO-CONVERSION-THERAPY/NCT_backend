@@ -87,6 +87,8 @@ export type MediaUploadDirectInput = Omit<
   file: File;
 };
 
+export type MediaSubmitTarget = 'b2' | 'r2' | 'both';
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -330,9 +332,10 @@ async function presignPutUrl(
   return `${config.endpoint.origin}${canonicalUri}?${canonicalQuery(params)}`;
 }
 
-async function signedB2Head(
+async function signedB2Request(
   env: Env,
   objectKey: string,
+  method: 'GET' | 'HEAD',
 ): Promise<Response> {
   const config = resolveB2Config(env);
   const { amzDate, dateStamp } = amzDates();
@@ -341,7 +344,7 @@ async function signedB2Head(
   const canonicalUri = `/${encodePathSegment(config.bucketName)}/${encodeObjectKeyPath(objectKey)}`;
   const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
   const canonicalRequest = [
-    'HEAD',
+    method,
     canonicalUri,
     '',
     `host:${host}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:${amzDate}\n`,
@@ -365,7 +368,7 @@ async function signedB2Head(
   ].join(', ');
 
   return fetch(`${config.endpoint.origin}${canonicalUri}`, {
-    method: 'HEAD',
+    method,
     headers: {
       authorization,
       'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
@@ -374,8 +377,42 @@ async function signedB2Head(
   });
 }
 
+function signedB2Head(
+  env: Env,
+  objectKey: string,
+): Promise<Response> {
+  return signedB2Request(env, objectKey, 'HEAD');
+}
+
+function signedB2Get(
+  env: Env,
+  objectKey: string,
+): Promise<Response> {
+  return signedB2Request(env, objectKey, 'GET');
+}
+
 function buildPublicUrl(env: Env, objectKey: string): string {
   return `${resolveB2Config(env).publicBaseUrl}/${encodeObjectKeyPath(objectKey)}`;
+}
+
+function buildR2PublicUrl(env: Env, objectKey: string): string {
+  const path = `/api/media/files/${encodeObjectKeyPath(objectKey)}`;
+  const baseUrl = env.SERVICE_PUBLIC_URL?.trim() || env.NO_TORSION_SITE_URL?.trim();
+  if (!baseUrl) {
+    return path;
+  }
+
+  return new URL(path, baseUrl).toString();
+}
+
+function buildMediaPublicUrl(
+  env: Env,
+  objectKey: string,
+  target: MediaSubmitTarget,
+): string {
+  return targetIncludesB2(target)
+    ? buildPublicUrl(env, objectKey)
+    : buildR2PublicUrl(env, objectKey);
 }
 
 type B2NativeAuth = {
@@ -513,6 +550,56 @@ async function uploadB2Native(
   if (!response.ok) {
     throw new Error(await readB2Error(response));
   }
+}
+
+async function putR2Object(
+  env: Env,
+  objectKey: string,
+  body: Parameters<R2Bucket['put']>[1],
+  contentType: string,
+  byteSize?: number,
+): Promise<void> {
+  if (!env.MEDIA_BUCKET) {
+    throw new Error('R2 media bucket is not configured.');
+  }
+
+  await env.MEDIA_BUCKET.put(objectKey, body, {
+    customMetadata: {
+      ...(typeof byteSize === 'number' ? { byteSize: String(byteSize) } : {}),
+      mirrorSource: 'nct-backend',
+    },
+    httpMetadata: {
+      contentType,
+    },
+  });
+}
+
+function uploadR2Native(
+  env: Env,
+  objectKey: string,
+  file: File,
+  contentType: string,
+): Promise<void> {
+  return putR2Object(env, objectKey, file, contentType, file.size);
+}
+
+async function copyB2ObjectToR2(
+  env: Env,
+  objectKey: string,
+  contentType: string,
+): Promise<void> {
+  const response = await signedB2Get(env, objectKey);
+  if (!response.ok) {
+    throw new Error(`B2 object could not be copied to R2: ${response.status}.`);
+  }
+
+  await putR2Object(
+    env,
+    objectKey,
+    response.body ?? await response.arrayBuffer(),
+    response.headers.get('content-type') || contentType,
+    Number(response.headers.get('content-length') ?? '') || undefined,
+  );
 }
 
 function mapTag(row: MediaTagRow): SchoolMediaTag {
@@ -792,16 +879,20 @@ export async function listMediaTags(
   return (result.results ?? []).map(mapTag);
 }
 
-export async function createMediaUpload(
+function targetIncludesB2(target: MediaSubmitTarget): boolean {
+  return target === 'b2' || target === 'both';
+}
+
+function targetIncludesR2(target: MediaSubmitTarget): boolean {
+  return target === 'r2' || target === 'both';
+}
+
+async function createMediaRecord(
   env: Env,
   input: MediaUploadPresignInput,
-): Promise<{
-  headers: Record<string, string>;
-  media: SchoolMediaRecord;
-  method: 'PUT';
-  uploadUrl: string;
-}> {
+): Promise<SchoolMediaRecord> {
   const values = validatePresignInput(env, input);
+  const target = getMediaSubmitTarget(env);
   const tags = await ensureTags(env.DB, values.tags, values.isR18);
   const mediaId = crypto.randomUUID();
   const schoolSlug = slugify(values.schoolName).slice(0, 80);
@@ -813,7 +904,7 @@ export async function createMediaUpload(
     String(year),
     `${mediaId}.${getExtension(values.fileName, values.contentType)}`,
   ].join('/');
-  const publicUrl = buildPublicUrl(env, objectKey);
+  const publicUrl = buildMediaPublicUrl(env, objectKey, target);
   const createdAt = nowIso();
 
   await env.DB.prepare(
@@ -879,13 +970,32 @@ export async function createMediaUpload(
     throw new Error('Failed to create media record.');
   }
 
+  return stored;
+}
+
+export async function createMediaUpload(
+  env: Env,
+  input: MediaUploadPresignInput,
+): Promise<{
+  headers: Record<string, string>;
+  media: SchoolMediaRecord;
+  method: 'PUT';
+  uploadUrl: string;
+}> {
+  const target = getMediaSubmitTarget(env);
+  if (!targetIncludesB2(target)) {
+    throw new Error('Presigned media uploads require B2 media target.');
+  }
+
+  const stored = await createMediaRecord(env, input);
+
   return {
     headers: {
-      'content-type': values.contentType,
+      'content-type': stored.contentType,
     },
     media: stored,
     method: 'PUT',
-    uploadUrl: await presignPutUrl(env, objectKey),
+    uploadUrl: await presignPutUrl(env, stored.objectKey),
   };
 }
 
@@ -928,6 +1038,10 @@ export async function completeMediaUpload(
   const uploadedSize = Number(headResponse.headers.get('content-length') ?? '');
   if (Number.isFinite(uploadedSize) && uploadedSize > 0 && uploadedSize !== media.byteSize) {
     throw new Error('B2 object size does not match the presigned upload record.');
+  }
+
+  if (targetIncludesR2(getMediaSubmitTarget(env))) {
+    await copyB2ObjectToR2(env, media.objectKey, media.contentType);
   }
 
   const uploadedAt = nowIso();
@@ -980,12 +1094,13 @@ async function markMediaUploadComplete(
   return stored;
 }
 
-export type MediaSubmitTarget = 'b2' | 'd1' | 'both';
-
 export function getMediaSubmitTarget(env: Env): MediaSubmitTarget {
   const raw = String(env.NO_TORSION_MEDIA_SUBMIT_TARGET ?? 'both').trim().toLowerCase();
-  if (raw === 'b2' || raw === 'd1' || raw === 'both') {
+  if (raw === 'b2' || raw === 'r2' || raw === 'both') {
     return raw;
+  }
+  if (raw === 'd1') {
+    return 'both';
   }
   return 'both';
 }
@@ -1000,64 +1115,23 @@ export async function uploadMediaDirect(
   }
 
   const target = getMediaSubmitTarget(env);
-
-  if (target === 'b2') {
-    const values = validatePresignInput(env, {
-      ...input,
-      byteSize: file.size,
-      contentType: file.type || 'application/octet-stream',
-      fileName: file.name,
-    });
-    const mediaType = getMediaType(values.contentType);
-    const mediaId = crypto.randomUUID();
-    const schoolSlug = slugify(values.schoolName).slice(0, 80);
-    const year = new Date().getUTCFullYear();
-    const objectKey = [
-      'media',
-      'schools',
-      schoolSlug,
-      String(year),
-      `${mediaId}.${getExtension(values.fileName, values.contentType)}`,
-    ].join('/');
-    await uploadB2Native(env, objectKey, file, values.contentType);
-    const nowAt = nowIso();
-    return {
-      id: mediaId,
-      objectKey,
-      publicUrl: buildPublicUrl(env, objectKey),
-      mediaType,
-      contentType: values.contentType,
-      byteSize: values.byteSize,
-      fileName: values.fileName,
-      schoolName: values.schoolName,
-      schoolNameNorm: normalizeSchoolName(values.schoolName),
-      schoolAddress: values.schoolAddress,
-      province: values.province,
-      city: values.city,
-      county: values.county,
-      isR18: values.isR18,
-      status: 'pending_review',
-      reviewNote: null,
-      uploadedAt: nowAt,
-      reviewedAt: null,
-      createdAt: nowAt,
-      updatedAt: nowAt,
-      tags: [],
-    } satisfies SchoolMediaRecord;
-  }
-
-  const upload = await createMediaUpload(env, {
+  const media = await createMediaRecord(env, {
     ...input,
     byteSize: file.size,
     contentType: file.type || 'application/octet-stream',
     fileName: file.name,
   });
 
-  if (target !== 'd1') {
-    await uploadB2Native(env, upload.media.objectKey, file, upload.media.contentType);
+  const objectUploads: Array<Promise<void>> = [];
+  if (targetIncludesB2(target)) {
+    objectUploads.push(uploadB2Native(env, media.objectKey, file, media.contentType));
   }
+  if (targetIncludesR2(target)) {
+    objectUploads.push(uploadR2Native(env, media.objectKey, file, media.contentType));
+  }
+  await Promise.all(objectUploads);
 
-  return markMediaUploadComplete(env.DB, upload.media.id);
+  return markMediaUploadComplete(env.DB, media.id);
 }
 
 export async function getSchoolMediaStats(

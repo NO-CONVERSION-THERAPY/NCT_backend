@@ -287,7 +287,7 @@ npm run dev
 
 仅推荐使用 Cloudflare Dashboard 的 Workers Builds 网页部署。本项目的 Worker 项目名使用目录名的 Workers 兼容形式：`nct-backend`。
 
-网页部署会读取 [`wrangler.toml`](./wrangler.toml)。部署命令里的 `npm run cf:ensure` 会自动创建 D1 数据库 `nct-backend`、把真实 `database_id` 写入当前构建环境中的 `wrangler.toml`，并执行远端 D1 migrations；不需要再手动创建 D1 或手动填写 `database_id`。
+网页部署会读取 [`wrangler.toml`](./wrangler.toml)。部署命令里的 `npm run cf:ensure` 会自动创建 D1 数据库 `nct-backend`、R2 bucket `nct-backend-media` / `nct-backend-media-preview`，把真实 `database_id` 写入当前构建环境中的 `wrangler.toml`，并执行远端 D1 migrations；不需要再手动创建 D1/R2 或手动填写 `database_id`。
 `wrangler.toml` 不包含 `[vars]`，生产变量和密钥以 Cloudflare Dashboard 为准。
 
 ### Workers Builds 填写
@@ -310,7 +310,7 @@ npm run dev
    - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
 4. 在 `Settings` -> `Triggers` 确认 Cron 来自 `wrangler.toml`：`*/30 * * * *` 和 `* * * * *`。
 5. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
-6. 推送生产分支触发部署。首次部署时会自动创建 D1、执行 migrations，然后发布 Worker。
+6. 推送生产分支触发部署。首次部署时会自动创建 D1/R2、执行 migrations，然后发布 Worker。
 
 建议生产变量：
 
@@ -324,7 +324,10 @@ DEBUG_MOD=false
 NO_TORSION_FORM_DRY_RUN=false
 NO_TORSION_FORM_SUBMIT_TARGET=d1
 NO_TORSION_CORRECTION_SUBMIT_TARGET=d1
+NO_TORSION_MEDIA_SUBMIT_TARGET=both
 ```
+
+`NO_TORSION_MEDIA_SUBMIT_TARGET=both` 会将媒体文件同时写入 Backblaze B2 与 Cloudflare R2；D1 保存媒体元数据和审核状态，公开链接仍使用 B2 URL。
 
 部署后检查：
 

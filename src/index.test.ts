@@ -562,3 +562,45 @@ describe('No-Torsion backend routes', () => {
     );
   });
 });
+
+describe('media file routes', () => {
+  it('serves uploaded R2 media files through the public media route', async () => {
+    const get = vi.fn(async () => ({
+      body: new Blob(['media-bytes']).stream(),
+      httpEtag: '"media-etag"',
+      writeHttpMetadata(headers: Headers) {
+        headers.set('content-type', 'image/png');
+      },
+    }));
+
+    const response = await app.fetch(
+      new Request('https://sub.example.test/api/media/files/media/schools/demo/2026/file.png'),
+      createEnv({
+        MEDIA_BUCKET: {
+          get,
+        } as unknown as R2Bucket,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('media-bytes');
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('etag')).toBe('"media-etag"');
+    expect(get).toHaveBeenCalledWith('media/schools/demo/2026/file.png');
+  });
+
+  it('rejects unsafe R2 media file keys', async () => {
+    const get = vi.fn();
+    const response = await app.fetch(
+      new Request('https://sub.example.test/api/media/files/private/secret.png'),
+      createEnv({
+        MEDIA_BUCKET: {
+          get,
+        } as unknown as R2Bucket,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(get).not.toHaveBeenCalled();
+  });
+});

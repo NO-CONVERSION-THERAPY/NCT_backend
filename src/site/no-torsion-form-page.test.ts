@@ -142,14 +142,18 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('Select a province first');
     expect(html).toContain('"code":"110000"');
     expect(html).toContain("form.addEventListener('submit', (event) => {");
-    expect(html).toContain('媒体上传仍在进行中');
+    expect(html).toContain('Media uploads are still in progress.');
     expect(html).toContain('id="questionnaire-media-picker-open"');
+    expect(html).toContain('Choose images / videos');
+    expect(html).toContain('No media selected.');
+    expect(html).toContain('Choose school media');
+    expect(html).toContain('Drop images or videos here');
     expect(html).toContain('media-picker-file-label');
     expect(html).toMatch(/<input(?=[^>]*id="questionnaire-media-file")(?![^>]*hidden)[^>]*>/);
     expect(html).toContain('form.elements.namedItem');
     expect(html).toContain("getFormValue('school_name')");
     expect(html).toContain('waitingForSchoolName');
-    expect(html).toContain('填写后会自动上传');
+    expect(html).toContain('this will upload automatically afterward');
     expect(html).toContain('name="media_records"');
     expect(html).toContain('id="questionnaire-media-progress"');
     expect(html).not.toContain('id="questionnaire-media-upload"');
@@ -178,6 +182,21 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('紧急援助');
     expect(html).toContain('class="standalone-language-picker__option is-active"');
     expect(html).toContain('href="/form?lang=zh-TW"');
+  });
+
+  it('renders localized media upload copy for zh-TW', () => {
+    const html = renderToString(
+      NoTorsionStandaloneFormPage({
+        lang: 'zh-TW',
+        token: 'public-form-token',
+      }),
+    );
+
+    expect(html).toContain('選擇圖片 / 影片');
+    expect(html).toContain('未選擇媒體檔案。');
+    expect(html).toContain('選擇學校媒體');
+    expect(html).toContain('媒體上傳仍在進行中');
+    expect(html).toContain('填寫後會自動上傳');
   });
 
   it('renders the review page with confirmation payload fields', () => {

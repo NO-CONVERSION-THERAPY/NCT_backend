@@ -25,10 +25,15 @@ type SupportedLanguage = 'en' | 'zh-CN' | 'zh-TW';
 
 type PageTexts = {
   actionBack: string;
+  actionCancel: string;
+  actionChooseFile: string;
+  actionChooseMedia: string;
   actionConfirm: string;
+  actionConfirmSelection: string;
   actionHome: string;
   actionOpenForm: string;
   actionOpenMapPicker: string;
+  actionRemoveMedia: string;
   actionUploadMedia: string;
   actionSubmit: string;
   actionSubmitting: string;
@@ -72,6 +77,8 @@ type PageTexts = {
   fieldViolenceCategories: string;
   helperFormIntro: string;
   helperMediaUpload: string;
+  helperMediaPickerAdd: string;
+  helperMediaPickerDrop: string;
   helperCoordinates: string;
   hintDateEnd: string;
   hintDateStart: string;
@@ -81,6 +88,10 @@ type PageTexts = {
   labelIdentityAgent: string;
   labelIdentitySelf: string;
   labelLanguage: string;
+  labelMediaPickerClose: string;
+  labelMediaPickerTitle: string;
+  labelMediaTypeImage: string;
+  labelMediaTypeVideo: string;
   labelOther: string;
   labelResultFailed: string;
   labelResultSucceeded: string;
@@ -104,6 +115,7 @@ type PageTexts = {
   placeholderLegalAidOther: string;
   placeholderLegalAidStatus: string;
   placeholderParentMotivationOther: string;
+  placeholderMediaTags: string;
   placeholderPreInstitutionCity: string;
   placeholderPreInstitutionProvince: string;
   placeholderProvince: string;
@@ -120,6 +132,20 @@ type PageTexts = {
   previewEmpty: string;
   previewLead: string;
   previewTitle: string;
+  statusMediaAwaitingSchoolName: string;
+  statusMediaAwaitingSchoolNameFile: string;
+  statusMediaPickerDraftEmpty: string;
+  statusMediaPickerDraftSaved: string;
+  statusMediaPickerEmpty: string;
+  statusMediaPickerPending: string;
+  statusMediaPickerRejected: string;
+  statusMediaPickerSelected: string;
+  statusMediaSubmittedForReview: string;
+  statusMediaUploadBlockingSubmit: string;
+  statusMediaUploadComplete: string;
+  statusMediaUploadFailed: string;
+  statusMediaUploading: string;
+  statusMediaUploadInProgress: string;
   statusFailedTargets: string;
   statusLocationFailed: string;
   statusLocationSelected: string;
@@ -1241,10 +1267,15 @@ const CHOICE_LABELS: Record<SupportedLanguage, Record<string, string>> = {
 const TEXTS: Record<SupportedLanguage, PageTexts> = {
   'zh-CN': {
     actionBack: '返回',
+    actionCancel: '取消',
+    actionChooseFile: '选择文件',
+    actionChooseMedia: '选择图片 / 视频',
     actionConfirm: '确认提交',
+    actionConfirmSelection: '确定',
     actionHome: '返回主页',
     actionOpenForm: '打开填写页',
     actionOpenMapPicker: '点击可直接在地图上选点',
+    actionRemoveMedia: '移除',
     actionUploadMedia: '上传并提交审核',
     actionSubmit: '继续确认',
     actionSubmitting: '提交中...',
@@ -1289,6 +1320,8 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     helperCoordinates: '坐标格式为“纬度, 经度”。地图选点或定位会自动填入，也可以手动修改。',
     helperFormIntro: '隐私说明：本问卷中填写的出生年份、性别等个人基本信息将被严格保密，相关经历、机构曝光信息未来可能公开展示，请勿在可能公开的字段中填写身份证号、私人电话、家庭住址等您的个人敏感信息。 填写过程中如感不适可随时停止',
     helperMediaUpload: '媒体按学校分类，不绑定具体受害者记录。选好后随问卷一起提交；如为 R18 内容请添加 r18 标签。',
+    helperMediaPickerAdd: '也可以多次点击选择文件，一张一张补齐后再确认。',
+    helperMediaPickerDrop: '拖拽图片或视频到这里',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入经历，可在经历描述中说明情况',
     hintExperience: '若描述别人经历请在“其它补充”中填写',
@@ -1297,6 +1330,10 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     labelIdentityAgent: '受害者的代理人',
     labelIdentitySelf: '受害者本人',
     labelLanguage: '语言',
+    labelMediaPickerClose: '关闭',
+    labelMediaPickerTitle: '选择学校媒体',
+    labelMediaTypeImage: '图片',
+    labelMediaTypeVideo: '视频',
     labelOther: '其它',
     labelResultFailed: '投递失败',
     labelResultSucceeded: '投递成功',
@@ -1320,6 +1357,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     placeholderLegalAidOther: '其它：请填写补充说明',
     placeholderLegalAidStatus: '可选：请选择当前情况',
     placeholderParentMotivationOther: '其它原因：请填写具体原因',
+    placeholderMediaTags: 'r18, 校门, 宿舍',
     placeholderPreInstitutionCity: '可选：请先选择进入机构前所在省份',
     placeholderPreInstitutionProvince: '可选：选择进入机构前所在省份',
     placeholderProvince: '请选择省份',
@@ -1336,6 +1374,20 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     previewEmpty: '未填写',
     previewLead: '以下信息将用于最终提交，请再次确认。',
     previewTitle: '提交前确认',
+    statusMediaAwaitingSchoolName: '请先填写机构名称，已选择的媒体会在填写后自动上传。',
+    statusMediaAwaitingSchoolNameFile: '请先填写机构名称，填写后会自动上传',
+    statusMediaPickerDraftEmpty: '拖拽文件到此处，或点击选择文件。',
+    statusMediaPickerDraftSaved: '已暂存 {count} 个文件，确认后写入上传列表。',
+    statusMediaPickerEmpty: '未选择媒体文件。',
+    statusMediaPickerPending: '待上传',
+    statusMediaPickerRejected: '已忽略 {count} 个不支持的文件。',
+    statusMediaPickerSelected: '已选择 {count} 个媒体文件，可继续添加或删除。',
+    statusMediaSubmittedForReview: '已提交审核：{status}',
+    statusMediaUploadBlockingSubmit: '媒体上传仍在进行中，问卷将在所有文件上传完成后自动提交。',
+    statusMediaUploadComplete: '媒体上传完成：{count} 个文件已提交审核。',
+    statusMediaUploadFailed: '上传失败。',
+    statusMediaUploading: '正在上传',
+    statusMediaUploadInProgress: '上传中：{done} / {total}',
     statusFailedTargets: '失败目标',
     statusLocationFailed: '无法获取当前位置，请检查浏览器定位授权。',
     statusLocationSelected: '已记录经纬度。',
@@ -1353,10 +1405,15 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
   },
   'zh-TW': {
     actionBack: '返回',
+    actionCancel: '取消',
+    actionChooseFile: '選擇檔案',
+    actionChooseMedia: '選擇圖片 / 影片',
     actionConfirm: '確認送出',
+    actionConfirmSelection: '確定',
     actionHome: '返回主頁',
     actionOpenForm: '開啟填寫頁',
     actionOpenMapPicker: '點擊可直接在地圖上選點',
+    actionRemoveMedia: '移除',
     actionUploadMedia: '上傳並提交審核',
     actionSubmit: '繼續確認',
     actionSubmitting: '送出中...',
@@ -1401,6 +1458,8 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     helperCoordinates: '座標格式為「緯度, 經度」。地圖選點或定位會自動填入，也可以手動修改。',
     helperFormIntro: '隱私說明：本問卷中填寫的出生年份、性別等個人基本資訊將被嚴格保密，相關經歷、機構曝光資訊未來可能公開展示，請勿在可能公開的欄位中填寫身分證號、私人電話、家庭住址等您的個人敏感資訊。 填寫過程中如感不適可隨時停止',
     helperMediaUpload: '媒體按學校分類，不綁定具體受害者記錄。選好後隨問卷一起提交；如為 R18 內容請加入 r18 標籤。',
+    helperMediaPickerAdd: '也可以多次點擊選擇檔案，一個一個補齊後再確認。',
+    helperMediaPickerDrop: '拖曳圖片或影片到這裡',
     hintDateEnd: '若目前仍在校，可不填',
     hintDateStart: '假如有多次被送入經歷，可在經歷描述中說明情況',
     hintExperience: '若描述別人經歷請在「其它補充」中填寫',
@@ -1409,6 +1468,10 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     labelIdentityAgent: '受害者的代理人',
     labelIdentitySelf: '受害者本人',
     labelLanguage: '語言',
+    labelMediaPickerClose: '關閉',
+    labelMediaPickerTitle: '選擇學校媒體',
+    labelMediaTypeImage: '圖片',
+    labelMediaTypeVideo: '影片',
     labelOther: '其它',
     labelResultFailed: '投遞失敗',
     labelResultSucceeded: '投遞成功',
@@ -1432,6 +1495,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     placeholderLegalAidOther: '其它：請填寫補充說明',
     placeholderLegalAidStatus: '可選：請選擇目前情況',
     placeholderParentMotivationOther: '其它原因：請填寫具體原因',
+    placeholderMediaTags: 'r18, 校門, 宿舍',
     placeholderPreInstitutionCity: '可選：請先選擇進入機構前所在省份',
     placeholderPreInstitutionProvince: '可選：選擇進入機構前所在省份',
     placeholderProvince: '請選擇省份',
@@ -1448,6 +1512,20 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     previewEmpty: '未填寫',
     previewLead: '以下資訊將用於最終提交，請再次確認。',
     previewTitle: '提交前確認',
+    statusMediaAwaitingSchoolName: '請先填寫機構名稱，已選擇的媒體會在填寫後自動上傳。',
+    statusMediaAwaitingSchoolNameFile: '請先填寫機構名稱，填寫後會自動上傳',
+    statusMediaPickerDraftEmpty: '拖曳檔案到此處，或點擊選擇檔案。',
+    statusMediaPickerDraftSaved: '已暫存 {count} 個檔案，確認後寫入上傳清單。',
+    statusMediaPickerEmpty: '未選擇媒體檔案。',
+    statusMediaPickerPending: '待上傳',
+    statusMediaPickerRejected: '已忽略 {count} 個不支援的檔案。',
+    statusMediaPickerSelected: '已選擇 {count} 個媒體檔案，可繼續新增或移除。',
+    statusMediaSubmittedForReview: '已提交審核：{status}',
+    statusMediaUploadBlockingSubmit: '媒體上傳仍在進行中，問卷將在所有檔案上傳完成後自動送出。',
+    statusMediaUploadComplete: '媒體上傳完成：{count} 個檔案已提交審核。',
+    statusMediaUploadFailed: '上傳失敗。',
+    statusMediaUploading: '正在上傳',
+    statusMediaUploadInProgress: '上傳中：{done} / {total}',
     statusFailedTargets: '失敗目標',
     statusLocationFailed: '無法取得目前位置，請檢查瀏覽器定位授權。',
     statusLocationSelected: '已記錄經緯度。',
@@ -1465,10 +1543,15 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
   },
   en: {
     actionBack: 'Back',
+    actionCancel: 'Cancel',
+    actionChooseFile: 'Choose files',
+    actionChooseMedia: 'Choose images / videos',
     actionConfirm: 'Confirm submission',
+    actionConfirmSelection: 'Done',
     actionHome: 'Back to home',
     actionOpenForm: 'Open form',
     actionOpenMapPicker: 'Pick on map',
+    actionRemoveMedia: 'Remove',
     actionUploadMedia: 'Upload for review',
     actionSubmit: 'Continue',
     actionSubmitting: 'Submitting...',
@@ -1513,6 +1596,8 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     helperCoordinates: 'Coordinate format is "latitude, longitude". Map selection or geolocation will fill it automatically, and you can edit it manually.',
     helperFormIntro: 'Privacy notice: Personal basic information entered in this questionnaire, such as birth year and sex/gender, will be kept strictly confidential. Related experiences and institution exposure information may be publicly displayed in the future. Please do not enter ID numbers, private phone numbers, home addresses, or other personal sensitive information in fields that may become public. You may stop at any time if you feel uncomfortable while filling it out.',
     helperMediaUpload: 'Media is grouped by school and is not linked to a specific survivor record. Selected media is submitted with the questionnaire; add the r18 tag for R18 content.',
+    helperMediaPickerAdd: 'You can choose files more than once, then confirm the final list.',
+    helperMediaPickerDrop: 'Drop images or videos here',
     hintDateEnd: 'Leave blank if the person is still there.',
     hintDateStart: 'If there were multiple admissions, describe them in the experience field.',
     hintExperience: 'If describing someone else, add context in Other notes.',
@@ -1521,6 +1606,10 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     labelIdentityAgent: 'Representative of the survivor',
     labelIdentitySelf: 'Survivor',
     labelLanguage: 'Language',
+    labelMediaPickerClose: 'Close',
+    labelMediaPickerTitle: 'Choose school media',
+    labelMediaTypeImage: 'Image',
+    labelMediaTypeVideo: 'Video',
     labelOther: 'Other',
     labelResultFailed: 'Failed',
     labelResultSucceeded: 'Delivered',
@@ -1544,6 +1633,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     placeholderLegalAidOther: 'Other: please describe',
     placeholderLegalAidStatus: 'Optional: select current status',
     placeholderParentMotivationOther: 'Other reason: please describe',
+    placeholderMediaTags: 'r18, gate, dormitory',
     placeholderPreInstitutionCity: 'Optional: select the province first',
     placeholderPreInstitutionProvince: 'Optional: select the province before entry',
     placeholderProvince: 'Select a province',
@@ -1560,6 +1650,20 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     previewEmpty: 'Not provided',
     previewLead: 'These values will be used for the final submission. Please review them carefully.',
     previewTitle: 'Review before submission',
+    statusMediaAwaitingSchoolName: 'Enter the institution name first. Selected media will upload automatically after that.',
+    statusMediaAwaitingSchoolNameFile: 'Enter the institution name first; this will upload automatically afterward.',
+    statusMediaPickerDraftEmpty: 'Drop files here, or choose files.',
+    statusMediaPickerDraftSaved: '{count} file(s) staged. Confirm to add them to the upload list.',
+    statusMediaPickerEmpty: 'No media selected.',
+    statusMediaPickerPending: 'Waiting to upload',
+    statusMediaPickerRejected: 'Ignored {count} unsupported file(s).',
+    statusMediaPickerSelected: '{count} media file(s) selected. You can add or remove files.',
+    statusMediaSubmittedForReview: 'Submitted for review: {status}',
+    statusMediaUploadBlockingSubmit: 'Media uploads are still in progress. The questionnaire will submit automatically after all files finish.',
+    statusMediaUploadComplete: 'Media upload complete: {count} file(s) submitted for review.',
+    statusMediaUploadFailed: 'Upload failed.',
+    statusMediaUploading: 'Uploading',
+    statusMediaUploadInProgress: 'Uploading: {done} / {total}',
     statusFailedTargets: 'Failed targets',
     statusLocationFailed: 'Unable to get the current location. Check browser location permission.',
     statusLocationSelected: 'Coordinates recorded.',
@@ -2179,6 +2283,18 @@ function syncQuestionnaireMediaUpload() {
     mediaPicker.setFileStatus(index, message, isError);
   }
 
+  function getMediaText(name, fallback) {
+    return (panel.dataset && panel.dataset[name]) || fallback;
+  }
+
+  function formatMediaText(name, fallback, values) {
+    let text = getMediaText(name, fallback);
+    Object.keys(values || {}).forEach((key) => {
+      text = text.replace(new RegExp('\\\\{' + key + '\\\\}', 'g'), String(values[key]));
+    });
+    return text;
+  }
+
   function setProgress(done, total) {
     if (!progressWrap || !progressBar || !progressLabel) return;
     if (total <= 0) {
@@ -2239,8 +2355,15 @@ function syncQuestionnaireMediaUpload() {
     if (!exists) {
       waitingForSchoolName.push({ file, index });
     }
-    setFileStatus(index, '请先填写机构名称，填写后会自动上传', true);
-    setStatus('请先填写机构名称，已选择的媒体会在填写后自动上传。', true);
+    setFileStatus(
+      index,
+      getMediaText('statusAwaitingSchoolNameFile', 'Enter the institution name first; this will upload automatically afterward.'),
+      true,
+    );
+    setStatus(
+      getMediaText('statusAwaitingSchoolName', 'Enter the institution name first. Selected media will upload automatically after that.'),
+      true,
+    );
     setProgress(completedRecords.length, completedRecords.length + inFlight.size + waitingForSchoolName.length);
   }
 
@@ -2254,7 +2377,7 @@ function syncQuestionnaireMediaUpload() {
   }
 
   async function uploadFile(file, index, metadata) {
-    setFileStatus(index, '正在上传', false);
+    setFileStatus(index, getMediaText('statusUploading', 'Uploading'), false);
     const body = new FormData();
     body.append('file', file, file.name);
     body.append('city', metadata.city);
@@ -2270,9 +2393,15 @@ function syncQuestionnaireMediaUpload() {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.error || '上传失败。');
+      throw new Error(payload.error || getMediaText('statusUploadFailed', 'Upload failed.'));
     }
-    setFileStatus(index, '已提交审核：' + payload.media.status, false);
+    setFileStatus(
+      index,
+      formatMediaText('statusSubmittedForReview', 'Submitted for review: {status}', {
+        status: payload.media.status,
+      }),
+      false,
+    );
     return payload.media;
   }
 
@@ -2312,13 +2441,18 @@ function syncQuestionnaireMediaUpload() {
       completedRecords.push(summarizeMedia(media, file, tags));
       syncRecordsInput();
     } catch (error) {
-      setFileStatus(index, error && error.message ? error.message : '上传失败', true);
+      setFileStatus(index, error && error.message ? error.message : getMediaText('statusUploadFailed', 'Upload failed.'), true);
     } finally {
       inFlight.delete(token);
       const total = completedRecords.length + inFlight.size;
       setProgress(completedRecords.length, total);
       if (inFlight.size === 0) {
-        setStatus('媒体上传完成：' + completedRecords.length + ' 个文件已提交审核。', false);
+        setStatus(
+          formatMediaText('statusUploadComplete', 'Media upload complete: {count} file(s) submitted for review.', {
+            count: completedRecords.length,
+          }),
+          false,
+        );
         if (pendingSubmit) {
           const submitter = pendingSubmit.submitter;
           pendingSubmit = null;
@@ -2333,7 +2467,13 @@ function syncQuestionnaireMediaUpload() {
           }
         }
       } else {
-        setStatus('上传中：' + completedRecords.length + ' / ' + total, false);
+        setStatus(
+          formatMediaText('statusUploadInProgress', 'Uploading: {done} / {total}', {
+            done: completedRecords.length,
+            total,
+          }),
+          false,
+        );
       }
     }
   }
@@ -2363,7 +2503,10 @@ function syncQuestionnaireMediaUpload() {
       form.reportValidity();
       return;
     }
-    setStatus('媒体上传仍在进行中，问卷将在所有文件上传完成后自动提交。', false);
+    setStatus(
+      getMediaText('statusUploadBlockingSubmit', 'Media uploads are still in progress. The questionnaire will submit automatically after all files finish.'),
+      false,
+    );
     pendingSubmit = {
       submitter: event.submitter && event.submitter instanceof HTMLElement ? event.submitter : null,
     };
@@ -2853,23 +2996,34 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) 
                 <textarea maxLength={3000} name="other" placeholder={texts.placeholderTextBlock} />
               </div>
 
-              <div className="field field--full" id="questionnaire-media-panel">
+              <div
+                className="field field--full"
+                data-status-awaiting-school-name={texts.statusMediaAwaitingSchoolName}
+                data-status-awaiting-school-name-file={texts.statusMediaAwaitingSchoolNameFile}
+                data-status-submitted-for-review={texts.statusMediaSubmittedForReview}
+                data-status-upload-blocking-submit={texts.statusMediaUploadBlockingSubmit}
+                data-status-upload-complete={texts.statusMediaUploadComplete}
+                data-status-upload-failed={texts.statusMediaUploadFailed}
+                data-status-upload-in-progress={texts.statusMediaUploadInProgress}
+                data-status-uploading={texts.statusMediaUploading}
+                id="questionnaire-media-panel"
+              >
                 <h2 className="form-section-title">{texts.fieldMediaSection}</h2>
                 <p className="field-note">{texts.helperMediaUpload}</p>
                 <div className="inline-grid">
                   <div className="media-picker-field">
                     <span className="field__label">{texts.fieldMediaFile}</span>
                     <button className="media-picker-open-button" id="questionnaire-media-picker-open" type="button">
-                      选择图片 / 视频
+                      {texts.actionChooseMedia}
                     </button>
-                    <p className="media-selected-summary" id="questionnaire-media-selected-summary">未选择媒体文件。</p>
+                    <p className="media-selected-summary" id="questionnaire-media-selected-summary">{texts.statusMediaPickerEmpty}</p>
                   </div>
                   <label>
                     <span className="field__label">{texts.fieldMediaTags}</span>
                     <input
                       id="questionnaire-media-tags"
                       maxLength={240}
-                      placeholder="r18, 校门, 宿舍"
+                      placeholder={texts.placeholderMediaTags}
                       type="text"
                     />
                   </label>
@@ -2881,28 +3035,42 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) 
                 <div className="media-preview-grid" hidden id="questionnaire-media-preview-list" />
                 <p className="field-note" hidden id="questionnaire-media-status" />
                 <input id="questionnaire-media-records" name="media_records" type="hidden" value="[]" />
-                <div className="media-picker-modal" hidden id="questionnaire-media-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="questionnaire-media-picker-title">
+                <div
+                  className="media-picker-modal"
+                  data-draft-empty-message={texts.statusMediaPickerDraftEmpty}
+                  data-draft-summary={texts.statusMediaPickerDraftSaved}
+                  data-empty-summary={texts.statusMediaPickerEmpty}
+                  data-pending-status={texts.statusMediaPickerPending}
+                  data-rejected-message={texts.statusMediaPickerRejected}
+                  data-remove-label={texts.actionRemoveMedia}
+                  data-selected-summary={texts.statusMediaPickerSelected}
+                  hidden
+                  id="questionnaire-media-picker-dialog"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="questionnaire-media-picker-title"
+                >
                   <div className="media-picker-backdrop" data-media-picker-close="true" />
                   <section className="media-picker-panel">
                     <div className="media-picker-header">
-                      <h2 id="questionnaire-media-picker-title">选择学校媒体</h2>
-                      <button aria-label="关闭" className="media-picker-close" id="questionnaire-media-picker-close" type="button">×</button>
+                      <h2 id="questionnaire-media-picker-title">{texts.labelMediaPickerTitle}</h2>
+                      <button aria-label={texts.labelMediaPickerClose} className="media-picker-close" id="questionnaire-media-picker-close" type="button">×</button>
                     </div>
                     <div className="media-picker-body">
                       <div className="media-picker-dropzone" id="questionnaire-media-picker-dropzone">
-                        <strong>拖拽图片或视频到这里</strong>
-                        <p>也可以多次点击选择文件，一张一张补齐后再确认。</p>
+                        <strong>{texts.helperMediaPickerDrop}</strong>
+                        <p>{texts.helperMediaPickerAdd}</p>
                         <label className="media-picker-secondary media-picker-file-label" id="questionnaire-media-picker-choose">
-                          选择文件
+                          {texts.actionChooseFile}
                           <input accept="image/gif,image/jpeg,image/png,image/webp,video/mp4,video/webm" className="media-picker-file-input" id="questionnaire-media-file" multiple type="file" />
                         </label>
                       </div>
-                      <p className="media-picker-message" id="questionnaire-media-picker-message">拖拽文件到此处，或点击选择文件。</p>
+                      <p className="media-picker-message" id="questionnaire-media-picker-message">{texts.statusMediaPickerDraftEmpty}</p>
                       <div className="media-preview-grid" hidden id="questionnaire-media-picker-draft-list" />
                     </div>
                     <div className="media-picker-footer">
-                      <button className="media-picker-secondary" id="questionnaire-media-picker-cancel" type="button">取消</button>
-                      <button className="media-picker-confirm" id="questionnaire-media-picker-confirm" type="button">确定</button>
+                      <button className="media-picker-secondary" id="questionnaire-media-picker-cancel" type="button">{texts.actionCancel}</button>
+                      <button className="media-picker-confirm" id="questionnaire-media-picker-confirm" type="button">{texts.actionConfirmSelection}</button>
                     </div>
                   </section>
                 </div>
@@ -2948,7 +3116,8 @@ function formatBytes(bytes: number): string {
 const MediaSummaryBlock: FC<{
   heading: string;
   items: NoTorsionMediaSummary[];
-}> = ({ heading, items }) => {
+  texts: PageTexts;
+}> = ({ heading, items, texts }) => {
   if (!items.length) return null;
   return (
     <div className="media-summary">
@@ -2958,7 +3127,7 @@ const MediaSummaryBlock: FC<{
           <li className="media-summary__item" key={item.id}>
             <strong>{item.fileName}</strong>
             <span>
-              {item.mediaType === 'video' ? '视频' : '图片'} · {formatBytes(item.byteSize)} · {item.status}
+              {item.mediaType === 'video' ? texts.labelMediaTypeVideo : texts.labelMediaTypeImage} · {formatBytes(item.byteSize)} · {item.status}
               {item.isR18 ? ' · R18' : ''}
             </span>
             {item.publicUrl ? (
@@ -3010,7 +3179,7 @@ export const NoTorsionStandalonePreviewPage: FC<PreviewPageState> = ({
             ))}
           </div>
 
-          <MediaSummaryBlock heading={texts.fieldMediaSection} items={mediaRecords ?? []} />
+          <MediaSummaryBlock heading={texts.fieldMediaSection} items={mediaRecords ?? []} texts={texts} />
 
           <div className="actions">
             <a className="button button--secondary" href={backHref}>{texts.actionBack}</a>
@@ -3077,7 +3246,7 @@ export const NoTorsionStandaloneResultPage: FC<ResultPageState> = ({
             })}
           </div>
 
-          <MediaSummaryBlock heading={texts.fieldMediaSection} items={result.mediaRecords ?? []} />
+          <MediaSummaryBlock heading={texts.fieldMediaSection} items={result.mediaRecords ?? []} texts={texts} />
 
           <div className="actions">
             <a className="button button--secondary" href={backHref}>{texts.actionBack}</a>

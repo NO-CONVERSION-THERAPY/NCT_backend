@@ -18,5 +18,10 @@ database_name = "nct-backend"
 database_id = "1f06edb3-c56a-4bf1-88bd-7402e0dc344e"
 migrations_dir = "./migrations"
 
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "nct-backend-media"
+preview_bucket_name = "nct-backend-media-preview"
+
 [triggers]
 crons = ["*/30 * * * *", "* * * * *"]
