@@ -155,6 +155,14 @@ describe('No-Torsion standalone JSX pages', () => {
     expect(html).toContain('waitingForSchoolName');
     expect(html).toContain('this will upload automatically afterward');
     expect(html).toContain('name="media_records"');
+    expect(html).toContain('data-tag-limit="20"');
+    expect(html).toContain('id="questionnaire-media-tag-list"');
+    expect(html).toContain('hidden="" id="questionnaire-media-tag-dropdown"');
+    expect(html).toContain('data-media-tag-preset="校门"');
+    expect(html).toContain('data-media-tag-preset="精神控制"');
+    expect(html).toContain('Select up to {count} media tags at a time.');
+    expect(html).not.toContain('Recommended tags');
+    expect(html).not.toContain('Extended tags');
     expect(html).toContain('id="questionnaire-media-progress"');
     expect(html).not.toContain('id="questionnaire-media-upload"');
     expect(html).not.toContain('name="questionnaire_media_r18"');

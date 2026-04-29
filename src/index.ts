@@ -1112,7 +1112,7 @@ function getFormTags(formData: FormData): string[] {
   }
 
   return value
-    .split(',')
+    .split(/[,，]/)
     .map((item) => item.trim())
     .filter(Boolean);
 }

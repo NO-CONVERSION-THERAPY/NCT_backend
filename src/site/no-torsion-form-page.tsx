@@ -14,6 +14,11 @@ import {
   type NoTorsionFormValues,
   type NoTorsionMediaSummary,
 } from '../lib/no-torsion-form';
+import {
+  MEDIA_TAG_LIMIT,
+  MEDIA_TAG_PRESET_GROUPS,
+  type MediaTagPresetLanguage,
+} from './media-tag-presets';
 import { MEDIA_PICKER_CSS, MEDIA_PICKER_SCRIPT } from './media-picker-assets';
 
 type AreaOption = {
@@ -141,6 +146,7 @@ type PageTexts = {
   statusMediaPickerRejected: string;
   statusMediaPickerSelected: string;
   statusMediaSubmittedForReview: string;
+  statusMediaTagLimit: string;
   statusMediaUploadBlockingSubmit: string;
   statusMediaUploadComplete: string;
   statusMediaUploadFailed: string;
@@ -405,6 +411,12 @@ button {
   opacity: 0.9;
 }
 
+.panel {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+}
+
 .hero--form {
   justify-items: center;
   padding: 26px 32px 28px;
@@ -652,6 +664,72 @@ button {
   text-align: right;
 }
 
+.tag-input-wrap {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.tag-preset-dropdown {
+  position: absolute;
+  z-index: 20;
+  inset-inline: 0;
+  top: calc(100% + 6px);
+  max-height: min(320px, 56vh);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.075)),
+    var(--surface-strong);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+}
+
+.tag-preset-dropdown[hidden] {
+  display: none !important;
+}
+
+.tag-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-preset-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.35rem;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.tag-preset-button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tag-preset-button[aria-pressed="true"] {
+  border-color: rgba(115, 189, 255, 0.7);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tag-preset-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .media-summary {
   margin-top: 18px;
   padding: 14px 16px;
@@ -758,6 +836,8 @@ button {
   gap: 10px;
   margin: 20px 0 0;
   padding: 18px 20px;
+  position: relative;
+  z-index: 1;
   color: var(--text);
   line-height: 1.7;
 }
@@ -1383,6 +1463,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     statusMediaPickerRejected: '已忽略 {count} 个不支持的文件。',
     statusMediaPickerSelected: '已选择 {count} 个媒体文件，可继续添加或删除。',
     statusMediaSubmittedForReview: '已提交审核：{status}',
+    statusMediaTagLimit: '一次最多选择 {count} 个媒体标签。',
     statusMediaUploadBlockingSubmit: '媒体上传仍在进行中，问卷将在所有文件上传完成后自动提交。',
     statusMediaUploadComplete: '媒体上传完成：{count} 个文件已提交审核。',
     statusMediaUploadFailed: '上传失败。',
@@ -1521,6 +1602,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     statusMediaPickerRejected: '已忽略 {count} 個不支援的檔案。',
     statusMediaPickerSelected: '已選擇 {count} 個媒體檔案，可繼續新增或移除。',
     statusMediaSubmittedForReview: '已提交審核：{status}',
+    statusMediaTagLimit: '一次最多選擇 {count} 個媒體標籤。',
     statusMediaUploadBlockingSubmit: '媒體上傳仍在進行中，問卷將在所有檔案上傳完成後自動送出。',
     statusMediaUploadComplete: '媒體上傳完成：{count} 個檔案已提交審核。',
     statusMediaUploadFailed: '上傳失敗。',
@@ -1659,6 +1741,7 @@ const TEXTS: Record<SupportedLanguage, PageTexts> = {
     statusMediaPickerRejected: 'Ignored {count} unsupported file(s).',
     statusMediaPickerSelected: '{count} media file(s) selected. You can add or remove files.',
     statusMediaSubmittedForReview: 'Submitted for review: {status}',
+    statusMediaTagLimit: 'Select up to {count} media tags at a time.',
     statusMediaUploadBlockingSubmit: 'Media uploads are still in progress. The questionnaire will submit automatically after all files finish.',
     statusMediaUploadComplete: 'Media upload complete: {count} file(s) submitted for review.',
     statusMediaUploadFailed: 'Upload failed.',
@@ -1730,6 +1813,13 @@ function resolveLanguage(value?: string): SupportedLanguage {
 
 function getTexts(language: SupportedLanguage): PageTexts {
   return TEXTS[resolveLanguage(language)];
+}
+
+function getMediaTagPresetLabel(
+  tag: { labels: Record<MediaTagPresetLanguage, string>; value: string },
+  language: SupportedLanguage,
+): string {
+  return tag.labels[language] || tag.value;
 }
 
 const SUPPORTED_LANGUAGES: SupportedLanguage[] = ['zh-CN', 'zh-TW', 'en'];
@@ -2261,12 +2351,18 @@ function syncQuestionnaireMediaUpload() {
   const form = panel.closest('form');
   const fileInput = document.getElementById('questionnaire-media-file');
   const tagInput = document.getElementById('questionnaire-media-tags');
+  const tagDropdown = document.getElementById('questionnaire-media-tag-dropdown');
   const status = document.getElementById('questionnaire-media-status');
   const recordsInput = document.getElementById('questionnaire-media-records');
   const progressWrap = document.getElementById('questionnaire-media-progress-wrap');
   const progressBar = document.getElementById('questionnaire-media-progress');
   const progressLabel = document.getElementById('questionnaire-media-progress-label');
   const mediaPicker = window.createSchoolMediaPicker('questionnaire-media');
+  const tagPresetButtons = Array.prototype.slice.call(panel.querySelectorAll('[data-media-tag-preset]'));
+  const configuredTagLimit = Number(panel.dataset && panel.dataset.tagLimit || '');
+  const tagLimit = Number.isFinite(configuredTagLimit) && configuredTagLimit > 0
+    ? Math.trunc(configuredTagLimit)
+    : 20;
   const completedRecords = [];
   const inFlight = new Set();
   const waitingForSchoolName = [];
@@ -2323,13 +2419,120 @@ function syncQuestionnaireMediaUpload() {
     return option ? option.textContent.trim() : '';
   }
 
+  function normalizeTagKey(value) {
+    return String(value || '').trim().toLocaleLowerCase('zh-CN');
+  }
+
+  function splitTags(value) {
+    return String(value || '')
+      .split(/[,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function uniqueTags(tags) {
+    const unique = [];
+    const seen = new Set();
+    tags.forEach((tag) => {
+      const key = normalizeTagKey(tag);
+      if (!key || seen.has(key) || unique.length >= tagLimit) return;
+      seen.add(key);
+      unique.push(tag);
+    });
+    return unique;
+  }
+
   function parseTags() {
-    return tagInput && tagInput.value
-      ? tagInput.value.split(',').map((item) => item.trim()).filter(Boolean)
-      : [];
+    return tagInput ? uniqueTags(splitTags(tagInput.value)) : [];
+  }
+
+  function writeTags(tags) {
+    if (!tagInput) return;
+    tagInput.value = uniqueTags(tags).join(', ');
+    updateTagPresetState();
+  }
+
+  function updateTagPresetState() {
+    if (!tagPresetButtons.length) return;
+    const selectedKeys = new Set(parseTags().map(normalizeTagKey));
+    const atLimit = selectedKeys.size >= tagLimit;
+    tagPresetButtons.forEach((button) => {
+      const value = button.dataset ? button.dataset.mediaTagPreset : '';
+      const isSelected = selectedKeys.has(normalizeTagKey(value));
+      button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      button.disabled = !isSelected && atLimit;
+    });
+  }
+
+  function showTagDropdown() {
+    if (tagDropdown) tagDropdown.hidden = false;
+  }
+
+  function hideTagDropdown() {
+    if (tagDropdown) tagDropdown.hidden = true;
+  }
+
+  function togglePresetTag(value) {
+    if (!tagInput) return;
+    const tags = parseTags();
+    const key = normalizeTagKey(value);
+    const existingIndex = tags.findIndex((tag) => normalizeTagKey(tag) === key);
+    if (existingIndex >= 0) {
+      tags.splice(existingIndex, 1);
+      writeTags(tags);
+      return;
+    }
+    if (tags.length >= tagLimit) {
+      setStatus(
+        formatMediaText('statusTagLimit', 'Select up to {count} media tags at a time.', {
+          count: tagLimit,
+        }),
+        true,
+      );
+      updateTagPresetState();
+      return;
+    }
+    writeTags(tags.concat(value));
   }
 
   if (!form || !fileInput) return;
+
+  if (tagDropdown && typeof tagDropdown.addEventListener === 'function') {
+    tagDropdown.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+  }
+  tagPresetButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      showTagDropdown();
+      togglePresetTag(button.dataset ? button.dataset.mediaTagPreset : '');
+      if (tagInput && typeof tagInput.focus === 'function') tagInput.focus();
+    });
+  });
+  if (tagInput && typeof tagInput.addEventListener === 'function') {
+    tagInput.addEventListener('focus', showTagDropdown);
+    tagInput.addEventListener('click', showTagDropdown);
+    tagInput.addEventListener('input', () => {
+      updateTagPresetState();
+      showTagDropdown();
+    });
+    tagInput.addEventListener('change', () => writeTags(parseTags()));
+    tagInput.addEventListener('blur', () => writeTags(parseTags()));
+    tagInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') hideTagDropdown();
+    });
+  }
+  document.addEventListener('mousedown', (event) => {
+    const target = event.target;
+    if (
+      target === tagInput
+      || (tagDropdown && tagDropdown.contains(target))
+    ) {
+      return;
+    }
+    hideTagDropdown();
+  });
+  updateTagPresetState();
 
   function getNamedField(name) {
     const named = form.elements && form.elements.namedItem ? form.elements.namedItem(name) : null;
@@ -3006,6 +3209,8 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) 
                 data-status-upload-failed={texts.statusMediaUploadFailed}
                 data-status-upload-in-progress={texts.statusMediaUploadInProgress}
                 data-status-uploading={texts.statusMediaUploading}
+                data-status-tag-limit={texts.statusMediaTagLimit}
+                data-tag-limit={MEDIA_TAG_LIMIT}
                 id="questionnaire-media-panel"
               >
                 <h2 className="form-section-title">{texts.fieldMediaSection}</h2>
@@ -3018,14 +3223,43 @@ export const NoTorsionStandaloneFormPage: FC<FormPageState> = ({ lang, token }) 
                     </button>
                     <p className="media-selected-summary" id="questionnaire-media-selected-summary">{texts.statusMediaPickerEmpty}</p>
                   </div>
-                  <label>
+                  <label className="tag-input-wrap">
                     <span className="field__label">{texts.fieldMediaTags}</span>
                     <input
                       id="questionnaire-media-tags"
-                      maxLength={240}
+                      list="questionnaire-media-tag-list"
+                      maxLength={800}
                       placeholder={texts.placeholderMediaTags}
                       type="text"
                     />
+                    <datalist id="questionnaire-media-tag-list">
+                      {MEDIA_TAG_PRESET_GROUPS.flatMap((group) => group.tags).map((tag) => (
+                        <option
+                          key={tag.value}
+                          label={getMediaTagPresetLabel(tag, lang)}
+                          value={tag.value}
+                        />
+                      ))}
+                    </datalist>
+                    <div
+                      className="tag-preset-dropdown"
+                      hidden
+                      id="questionnaire-media-tag-dropdown"
+                    >
+                      <div className="tag-preset-list">
+                        {MEDIA_TAG_PRESET_GROUPS.flatMap((group) => group.tags).map((tag) => (
+                          <button
+                            aria-pressed="false"
+                            className="tag-preset-button"
+                            data-media-tag-preset={tag.value}
+                            key={tag.value}
+                            type="button"
+                          >
+                            {getMediaTagPresetLabel(tag, lang)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </label>
                 </div>
                 <div className="media-progress" hidden id="questionnaire-media-progress-wrap">

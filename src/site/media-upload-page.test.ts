@@ -9,6 +9,13 @@ describe('MediaUploadPage', () => {
     expect(html).toContain('media-picker-file-label');
     expect(html).toMatch(/<input(?=[^>]*id="media-file")(?![^>]*hidden)[^>]*>/);
     expect(html).toContain('data-empty-summary="未选择媒体文件。"');
+    expect(html).toContain('data-media-tag-limit="20"');
+    expect(html).toContain('hidden="" id="media-tag-dropdown"');
+    expect(html).toContain('data-media-tag-preset="校门"');
+    expect(html).toContain('data-media-tag-preset="精神控制"');
+    expect(html).toContain('split(/[,，]/)');
+    expect(html).not.toContain('推荐标签');
+    expect(html).not.toContain('扩展标签');
     expect(html).not.toContain('fileInput.click()');
   });
 

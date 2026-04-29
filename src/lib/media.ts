@@ -12,6 +12,7 @@ import { resolveConfiguredBaseUrl } from './url';
 
 const R18_TAG_ID = 'tag:r18';
 const R18_TAG_SLUG = 'r18';
+const MEDIA_TAG_LIMIT = 20;
 const DEFAULT_ALLOWED_MIME_TYPES = [
   'image/gif',
   'image/jpeg',
@@ -818,14 +819,14 @@ function parseTagLabels(value: unknown): string[] {
     return value
       .map((item) => getString(item, 40))
       .filter(Boolean)
-      .slice(0, 12);
+      .slice(0, MEDIA_TAG_LIMIT);
   }
   if (typeof value === 'string') {
     return value
-      .split(',')
+      .split(/[,，]/)
       .map((item) => getString(item, 40))
       .filter(Boolean)
-      .slice(0, 12);
+      .slice(0, MEDIA_TAG_LIMIT);
   }
   return [];
 }

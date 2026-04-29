@@ -1,12 +1,20 @@
 import type { FC } from 'hono/jsx';
+import { MEDIA_TAG_LIMIT, MEDIA_TAG_PRESET_GROUPS } from './media-tag-presets';
 import { MEDIA_PICKER_CSS, MEDIA_PICKER_SCRIPT } from './media-picker-assets';
 
 const MEDIA_PAGE_SCRIPT = `
 const form = document.getElementById('media-upload-form');
 const statusBox = document.getElementById('media-status');
 const tagList = document.getElementById('media-tag-list');
+const tagInput = form ? form.elements.namedItem('tags') : null;
+const tagDropdown = document.getElementById('media-tag-dropdown');
+const tagPresetButtons = Array.prototype.slice.call(document.querySelectorAll('[data-media-tag-preset]'));
 const submitButton = form ? form.querySelector('button[type="submit"]') : null;
 const mediaPicker = window.createSchoolMediaPicker('media');
+const configuredTagLimit = Number(document.body.dataset && document.body.dataset.mediaTagLimit || '');
+const tagLimit = Number.isFinite(configuredTagLimit) && configuredTagLimit > 0
+  ? Math.trunc(configuredTagLimit)
+  : 20;
 
 function setStatus(message, isError) {
   statusBox.textContent = message;
@@ -17,16 +25,100 @@ function setFileStatus(index, message, isError) {
   mediaPicker.setFileStatus(index, message, isError);
 }
 
-async function loadTags() {
-  const response = await fetch('/api/media/tags');
-  if (!response.ok) return;
-  const payload = await response.json();
+function normalizeTagKey(value) {
+  return String(value || '').trim().toLocaleLowerCase('zh-CN');
+}
+
+function splitTags(value) {
+  return String(value || '')
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueTags(tags) {
+  const unique = [];
+  const seen = new Set();
+  tags.forEach((tag) => {
+    const key = normalizeTagKey(tag);
+    if (!key || seen.has(key) || unique.length >= tagLimit) return;
+    seen.add(key);
+    unique.push(tag);
+  });
+  return unique;
+}
+
+function parseTags() {
+  return tagInput ? uniqueTags(splitTags(tagInput.value)) : [];
+}
+
+function writeTags(tags) {
+  if (!tagInput) return;
+  tagInput.value = uniqueTags(tags).join(', ');
+  updateTagPresetState();
+}
+
+function updateTagPresetState() {
+  const selectedKeys = new Set(parseTags().map(normalizeTagKey));
+  const atLimit = selectedKeys.size >= tagLimit;
+  tagPresetButtons.forEach((button) => {
+    const value = button.dataset ? button.dataset.mediaTagPreset : '';
+    const isSelected = selectedKeys.has(normalizeTagKey(value));
+    button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    button.disabled = !isSelected && atLimit;
+  });
+}
+
+function showTagDropdown() {
+  if (tagDropdown) tagDropdown.hidden = false;
+}
+
+function hideTagDropdown() {
+  if (tagDropdown) tagDropdown.hidden = true;
+}
+
+function togglePresetTag(value) {
+  if (!tagInput) return;
+  const tags = parseTags();
+  const key = normalizeTagKey(value);
+  const existingIndex = tags.findIndex((tag) => normalizeTagKey(tag) === key);
+  if (existingIndex >= 0) {
+    tags.splice(existingIndex, 1);
+    writeTags(tags);
+    return;
+  }
+  if (tags.length >= tagLimit) {
+    setStatus('一次最多选择 ' + tagLimit + ' 个媒体标签。', true);
+    updateTagPresetState();
+    return;
+  }
+  writeTags(tags.concat(value));
+}
+
+function writeTagOptions(tags) {
   tagList.innerHTML = '';
-  for (const tag of payload.tags || []) {
+  const seen = new Set();
+  for (const label of tags) {
+    const key = normalizeTagKey(label);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
     const option = document.createElement('option');
-    option.value = tag.label;
+    option.value = label;
     tagList.appendChild(option);
   }
+}
+
+async function loadTags() {
+  const response = await fetch('/api/media/tags');
+  const presetTags = tagPresetButtons
+    .map((button) => button.dataset ? button.dataset.mediaTagPreset : '')
+    .filter(Boolean);
+  if (!response.ok) {
+    writeTagOptions(presetTags);
+    return;
+  }
+  const payload = await response.json();
+  writeTagOptions(presetTags.concat((payload.tags || []).map((tag) => tag.label)));
 }
 
 async function uploadFile(file, index, metadata) {
@@ -67,10 +159,7 @@ form.addEventListener('submit', async (event) => {
     province: String(formData.get('province') || ''),
     schoolAddress: String(formData.get('schoolAddress') || ''),
     schoolName: String(formData.get('schoolName') || ''),
-    tags: String(formData.get('tags') || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
+    tags: parseTags()
   };
 
   let succeeded = 0;
@@ -97,6 +186,42 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+if (tagDropdown && typeof tagDropdown.addEventListener === 'function') {
+  tagDropdown.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+  });
+}
+tagPresetButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    showTagDropdown();
+    togglePresetTag(button.dataset ? button.dataset.mediaTagPreset : '');
+    if (tagInput && typeof tagInput.focus === 'function') tagInput.focus();
+  });
+});
+if (tagInput && typeof tagInput.addEventListener === 'function') {
+  tagInput.addEventListener('focus', showTagDropdown);
+  tagInput.addEventListener('click', showTagDropdown);
+  tagInput.addEventListener('input', () => {
+    updateTagPresetState();
+    showTagDropdown();
+  });
+  tagInput.addEventListener('change', () => writeTags(parseTags()));
+  tagInput.addEventListener('blur', () => writeTags(parseTags()));
+  tagInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') hideTagDropdown();
+  });
+}
+document.addEventListener('mousedown', (event) => {
+  const target = event.target;
+  if (
+    target === tagInput
+    || (tagDropdown && tagDropdown.contains(target))
+  ) {
+    return;
+  }
+  hideTagDropdown();
+});
+updateTagPresetState();
 loadTags();
 `;
 
@@ -248,6 +373,61 @@ export const MediaUploadPage: FC = () => (
         .status[data-state="ok"] {
           color: #175cd3;
         }
+        .tag-input-wrap {
+          position: relative;
+          display: grid;
+          gap: 8px;
+        }
+        .tag-preset-dropdown {
+          position: absolute;
+          z-index: 20;
+          inset-inline: 0;
+          top: calc(100% + 6px);
+          max-height: min(320px, 56vh);
+          overflow: auto;
+          padding: 12px;
+          border: 1px solid rgba(32, 48, 76, 0.14);
+          border-radius: 8px;
+          background: #fff;
+          box-shadow: 0 18px 40px rgba(19, 32, 54, 0.16);
+        }
+        .tag-preset-dropdown[hidden] {
+          display: none !important;
+        }
+        .tag-preset-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .tag-preset-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 2.35rem;
+          padding: 8px 12px;
+          border: 1px solid rgba(32, 48, 76, 0.18);
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #172033;
+          font: inherit;
+          font-size: 0.92rem;
+          font-weight: 700;
+          line-height: 1.2;
+          cursor: pointer;
+        }
+        .tag-preset-button:hover:not(:disabled) {
+          border-color: rgba(29, 78, 216, 0.42);
+          background: #eef4ff;
+        }
+        .tag-preset-button[aria-pressed="true"] {
+          border-color: #175cd3;
+          background: #dbeafe;
+          color: #175cd3;
+        }
+        .tag-preset-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
         ${MEDIA_PICKER_CSS}
         @media (max-width: 720px) {
           .grid {
@@ -259,7 +439,7 @@ export const MediaUploadPage: FC = () => (
         }
       `}</style>
     </head>
-    <body>
+    <body data-media-tag-limit={MEDIA_TAG_LIMIT}>
       <main className="shell">
         <header>
           <h1>学校媒体上传</h1>
@@ -287,10 +467,29 @@ export const MediaUploadPage: FC = () => (
               <span>学校地址</span>
               <input maxLength={200} name="schoolAddress" />
             </label>
-            <label className="full">
+            <label className="full tag-input-wrap">
               <span>标签，逗号分隔</span>
-              <input list="media-tag-list" maxLength={240} name="tags" placeholder="例如：校门, 宿舍, r18" />
-              <datalist id="media-tag-list" />
+              <input list="media-tag-list" maxLength={800} name="tags" placeholder="例如：校门, 宿舍, r18" />
+              <datalist id="media-tag-list">
+                {MEDIA_TAG_PRESET_GROUPS.flatMap((group) => group.tags).map((tag) => (
+                  <option key={tag.value} value={tag.value} />
+                ))}
+              </datalist>
+              <div className="tag-preset-dropdown" hidden id="media-tag-dropdown">
+                <div className="tag-preset-list">
+                  {MEDIA_TAG_PRESET_GROUPS.flatMap((group) => group.tags).map((tag) => (
+                    <button
+                      aria-pressed="false"
+                      className="tag-preset-button"
+                      data-media-tag-preset={tag.value}
+                      key={tag.value}
+                      type="button"
+                    >
+                      {tag.labels['zh-CN']}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </label>
             <div className="full media-picker-field">
               <span>媒体文件</span>
