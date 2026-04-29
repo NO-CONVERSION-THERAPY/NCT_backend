@@ -24,6 +24,7 @@ import {
   computeRecordContentFingerprint,
   deriveRecordContentVersion,
 } from './record-version';
+import { resolveConfiguredBaseUrl } from './url';
 
 type DynamicRow = Record<string, unknown> & {
   id: string;
@@ -897,7 +898,7 @@ export async function exportDatabackFile(
 
   return {
     service: env.APP_NAME ?? 'NCT API SQL Sub',
-    serviceUrl: options.serviceUrl?.trim() || env.SERVICE_PUBLIC_URL?.trim() || '',
+    serviceUrl: resolveConfiguredBaseUrl(options.serviceUrl, env.SERVICE_PUBLIC_URL) ?? '',
     afterVersion,
     currentVersion: await getNullableDatabackVersion(db),
     exportedAt: nowIso(),

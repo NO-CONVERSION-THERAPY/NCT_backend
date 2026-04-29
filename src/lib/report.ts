@@ -1,4 +1,10 @@
-import type { MotherMediaSyncResult, MotherReportPayload, MotherReportResult } from '../types';
+import type {
+  MotherMediaObjectSyncResult,
+  MotherMediaSyncRecord,
+  MotherMediaSyncResult,
+  MotherReportPayload,
+  MotherReportResult,
+} from '../types';
 import {
   bumpServiceReportCount,
   getNullableDatabackVersion,
@@ -7,12 +13,18 @@ import {
   markMotherFormSyncSuccess,
 } from './data';
 import {
+  getMediaSubmitTarget,
   getSchoolMediaStats,
+  listPendingMotherMediaObjectSyncRecords,
   listPendingMotherMediaSyncRecords,
+  markMotherMediaObjectSyncFailure,
+  markMotherMediaObjectSyncSuccess,
   markMotherMediaSyncFailure,
   markMotherMediaSyncSuccess,
+  mediaTargetIncludesR2,
 } from './media';
 import { deriveServiceAuthToken } from './service-auth';
+import { normalizeConfiguredBaseUrl, resolveConfiguredBaseUrl } from './url';
 
 // A warm Worker isolate may serve many requests, so keep the startup report idempotent per isolate.
 let startupReportTriggered = false;
@@ -26,12 +38,7 @@ function resolveServiceUrl(
   env: Env,
   fallbackOrigin?: string
 ): string | null {
-  const configured = env.SERVICE_PUBLIC_URL?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  return fallbackOrigin?.trim() || null;
+  return resolveConfiguredBaseUrl(env.SERVICE_PUBLIC_URL, fallbackOrigin);
 }
 
 function resolveMotherUrl(
@@ -39,11 +46,12 @@ function resolveMotherUrl(
   path: '/api/sub/report' | '/api/sub/form-records',
 ): string | null {
   const motherBaseUrl = env.MOTHER_REPORT_URL?.trim();
-  if (!motherBaseUrl) {
+  const normalizedMotherBaseUrl = normalizeConfiguredBaseUrl(motherBaseUrl);
+  if (!normalizedMotherBaseUrl) {
     return null;
   }
 
-  return new URL(path, motherBaseUrl).toString();
+  return new URL(path, normalizedMotherBaseUrl).toString();
 }
 
 function resolveMotherReportUrl(env: Env): string | null {
@@ -55,12 +63,54 @@ function resolveMotherFormSyncUrl(env: Env): string | null {
 }
 
 function resolveMotherMediaSyncUrl(env: Env): string | null {
-  const motherReportUrl = env.MOTHER_REPORT_URL?.trim();
+  const motherReportUrl = normalizeConfiguredBaseUrl(env.MOTHER_REPORT_URL);
   if (!motherReportUrl) {
     return null;
   }
 
   return new URL('/api/sub/media-records', motherReportUrl).toString();
+}
+
+function resolveMotherMediaObjectSyncUrl(env: Env): string | null {
+  const motherReportUrl = normalizeConfiguredBaseUrl(env.MOTHER_REPORT_URL);
+  if (!motherReportUrl) {
+    return null;
+  }
+
+  return new URL('/api/sub/media-objects', motherReportUrl).toString();
+}
+
+function normalizeMediaPublicUrl(publicUrl: string, baseUrl: string | null): string {
+  const trimmed = publicUrl.trim();
+  if (!trimmed) return publicUrl;
+
+  const normalized = normalizeConfiguredBaseUrl(trimmed);
+  if (normalized) return normalized;
+
+  if (!baseUrl) return publicUrl;
+
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return publicUrl;
+  }
+}
+
+function normalizeMediaSyncRecords(
+  records: MotherMediaSyncRecord[],
+  env: Env,
+  fallbackOrigin?: string,
+): MotherMediaSyncRecord[] {
+  const publicBaseUrl = resolveConfiguredBaseUrl(
+    env.SERVICE_PUBLIC_URL,
+    env.NO_TORSION_SITE_URL,
+    fallbackOrigin,
+  );
+
+  return records.map((record) => ({
+    ...record,
+    publicUrl: normalizeMediaPublicUrl(record.publicUrl, publicBaseUrl),
+  }));
 }
 
 function getReportTimeoutMs(env: Env): number {
@@ -207,9 +257,13 @@ export async function flushPendingMotherMediaRecords(
     };
   }
 
-  const pendingRecords = await listPendingMotherMediaSyncRecords(
-    env.DB,
-    getFormSyncBatchSize(env),
+  const pendingRecords = normalizeMediaSyncRecords(
+    await listPendingMotherMediaSyncRecords(
+      env.DB,
+      getFormSyncBatchSize(env),
+    ),
+    env,
+    options.fallbackOrigin,
   );
   if (pendingRecords.length === 0) {
     return {
@@ -304,6 +358,142 @@ export async function flushPendingMotherMediaRecords(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function flushPendingMotherMediaObjects(
+  env: Env,
+  options: {
+    fallbackOrigin?: string;
+  } = {},
+): Promise<{
+  deliveredCount: number;
+  pendingCount: number;
+  reason?: string;
+  responseCode?: number | null;
+  skipped: boolean;
+}> {
+  if (!mediaTargetIncludesR2(getMediaSubmitTarget(env))) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'R2 media target is not enabled.',
+      skipped: true,
+    };
+  }
+  if (!env.MEDIA_BUCKET) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'MEDIA_BUCKET is not configured.',
+      skipped: true,
+    };
+  }
+
+  const motherMediaObjectSyncUrl = resolveMotherMediaObjectSyncUrl(env);
+  if (!motherMediaObjectSyncUrl) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'MOTHER_REPORT_URL is not configured.',
+      skipped: true,
+    };
+  }
+
+  const serviceUrl = resolveServiceUrl(env, options.fallbackOrigin);
+  if (!serviceUrl) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      reason: 'SERVICE_PUBLIC_URL is not configured and no request origin is available.',
+      skipped: true,
+    };
+  }
+
+  const pendingRecords = await listPendingMotherMediaObjectSyncRecords(
+    env.DB,
+    getFormSyncBatchSize(env),
+  );
+  if (pendingRecords.length === 0) {
+    return {
+      deliveredCount: 0,
+      pendingCount: 0,
+      skipped: true,
+    };
+  }
+
+  let deliveredCount = 0;
+  let lastResponseCode: number | null = null;
+  let lastReason: string | undefined;
+  const authToken = await deriveServiceAuthToken(serviceUrl);
+
+  for (const record of pendingRecords) {
+    const object = await env.MEDIA_BUCKET.get(record.objectKey);
+    if (!object) {
+      const reason = 'Local R2 media object was not found.';
+      await markMotherMediaObjectSyncFailure(env.DB, record.id, reason);
+      lastReason = reason;
+      continue;
+    }
+
+    const targetUrl = new URL(motherMediaObjectSyncUrl);
+    targetUrl.searchParams.set('serviceUrl', serviceUrl);
+    targetUrl.searchParams.set('mediaId', record.id);
+    targetUrl.searchParams.set('objectKey', record.objectKey);
+    targetUrl.searchParams.set('byteSize', String(record.byteSize));
+    targetUrl.searchParams.set('contentType', record.contentType);
+
+    const headers = new Headers({
+      authorization: `Bearer ${authToken}`,
+    });
+    object.writeHttpMetadata(headers);
+    headers.set('content-type', headers.get('content-type') || record.contentType);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), getFormSyncTimeoutMs(env));
+    try {
+      const response = await fetch(targetUrl.toString(), {
+        method: 'POST',
+        headers,
+        body: object.body,
+        signal: controller.signal,
+      });
+      lastResponseCode = response.status;
+      const responseText = await response.text();
+      const acceptedPayload = await readAcceptedPayload<MotherMediaObjectSyncResult & {
+        reason?: unknown;
+      }>(responseText);
+      if (response.ok && acceptedPayload?.stored === true) {
+        await markMotherMediaObjectSyncSuccess(env.DB, {
+          localObjectKey: acceptedPayload.localObjectKey,
+          mediaId: record.id,
+          publicUrl: acceptedPayload.publicUrl,
+          stored: true,
+        });
+        deliveredCount += 1;
+      } else {
+        const reason = typeof acceptedPayload?.reason === 'string'
+          ? acceptedPayload.reason
+          : responseText || `Mother media object sync failed with status ${response.status}.`;
+        await markMotherMediaObjectSyncFailure(env.DB, record.id, reason);
+        lastReason = reason;
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown media object sync error';
+      await markMotherMediaObjectSyncFailure(env.DB, record.id, reason);
+      lastReason = reason;
+      lastResponseCode = null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return {
+    deliveredCount,
+    pendingCount: pendingRecords.length - deliveredCount,
+    reason: lastReason,
+    responseCode: lastResponseCode,
+    skipped: false,
+  };
 }
 
 export async function syncFromMother(_env: Env): Promise<{

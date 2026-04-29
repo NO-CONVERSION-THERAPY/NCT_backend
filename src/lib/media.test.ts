@@ -16,6 +16,11 @@ type StoredMediaRow = {
   mother_sync_last_error: string | null;
   mother_sync_last_success_at: string | null;
   mother_sync_status: string;
+  mother_object_sync_attempts: number;
+  mother_object_sync_last_attempt_at: string | null;
+  mother_object_sync_last_error: string | null;
+  mother_object_sync_last_success_at: string | null;
+  mother_object_sync_status: string;
   object_key: string;
   province: string;
   public_url: string;
@@ -85,6 +90,11 @@ function createMediaDb(seedRow?: StoredMediaRow) {
                     mother_sync_last_error: null,
                     mother_sync_last_success_at: null,
                     mother_sync_status: 'pending',
+                    mother_object_sync_attempts: 0,
+                    mother_object_sync_last_attempt_at: null,
+                    mother_object_sync_last_error: null,
+                    mother_object_sync_last_success_at: null,
+                    mother_object_sync_status: 'pending',
                     object_key: String(objectKey),
                     province: String(province),
                     public_url: String(publicUrl),
@@ -234,6 +244,51 @@ describe('media uploads', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('builds absolute R2 public URLs from bare configured service hosts', async () => {
+    const { db } = createMediaDb();
+    const r2Put = vi.fn(async () => null);
+    vi.stubGlobal('fetch', vi.fn());
+    const file = new File(['media-bytes'], 'gate.png', { type: 'image/png' });
+
+    const media = await uploadMediaDirect({
+      DB: db,
+      MEDIA_BUCKET: {
+        put: r2Put,
+      } as unknown as R2Bucket,
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'r2',
+      SERVICE_PUBLIC_URL: 'testbk.medicago.top',
+    } as Env, {
+      file,
+      schoolName: 'R2 School',
+      tags: [],
+    });
+
+    expect(media.publicUrl).toBe(`https://testbk.medicago.top/api/media/files/${media.objectKey}`);
+  });
+
+  it('uses the request origin fallback for R2 public URLs', async () => {
+    const { db } = createMediaDb();
+    const r2Put = vi.fn(async () => null);
+    vi.stubGlobal('fetch', vi.fn());
+    const file = new File(['media-bytes'], 'gate.png', { type: 'image/png' });
+
+    const media = await uploadMediaDirect({
+      DB: db,
+      MEDIA_BUCKET: {
+        put: r2Put,
+      } as unknown as R2Bucket,
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'r2',
+    } as Env, {
+      file,
+      schoolName: 'R2 School',
+      tags: [],
+    }, {
+      fallbackOrigin: 'https://request.example.test',
+    });
+
+    expect(media.publicUrl).toBe(`https://request.example.test/api/media/files/${media.objectKey}`);
+  });
+
   it('mirrors direct uploads to R2 when media submit target is both', async () => {
     const { db } = createMediaDb();
     const r2Put = vi.fn(async () => null);
@@ -273,9 +328,18 @@ describe('media uploads', () => {
     );
   });
 
-  it('treats the legacy d1 media target as B2 and R2 object storage', () => {
+  it('normalizes media submit target values to lowercase options', () => {
     expect(getMediaSubmitTarget({
-      NO_TORSION_MEDIA_SUBMIT_TARGET: 'd1',
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'R2',
+    } as Env)).toBe('r2');
+    expect(getMediaSubmitTarget({
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'Both',
+    } as Env)).toBe('both');
+  });
+
+  it('falls back to both for unsupported media submit targets', () => {
+    expect(getMediaSubmitTarget({
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'cloudflare',
     } as Env)).toBe('both');
   });
 
@@ -295,6 +359,11 @@ describe('media uploads', () => {
       mother_sync_last_error: null,
       mother_sync_last_success_at: null,
       mother_sync_status: 'pending',
+      mother_object_sync_attempts: 0,
+      mother_object_sync_last_attempt_at: null,
+      mother_object_sync_last_error: null,
+      mother_object_sync_last_success_at: null,
+      mother_object_sync_status: 'pending',
       object_key: 'media/schools/example/2026/media-id.png',
       province: '',
       public_url: 'https://f003.backblazeb2.com/file/jiaozheng/media/schools/example/2026/media-id.png',

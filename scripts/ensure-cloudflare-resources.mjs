@@ -5,6 +5,23 @@ import path from 'node:path';
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
+class WranglerCommandError extends Error {
+  constructor(args, result) {
+    super(
+      [
+        `wrangler ${args.join(' ')} failed with exit code ${result.status}.`,
+        result.stdout?.trim(),
+        result.stderr?.trim(),
+      ].filter(Boolean).join('\n'),
+    );
+    this.name = 'WranglerCommandError';
+    this.args = args;
+    this.status = result.status;
+    this.stdout = result.stdout ?? '';
+    this.stderr = result.stderr ?? '';
+  }
+}
+
 function parseArgs(argv) {
   const options = {
     config: null,
@@ -57,13 +74,7 @@ function runWrangler(args) {
   );
 
   if (result.status !== 0) {
-    throw new Error(
-      [
-        `wrangler ${args.join(' ')} failed with exit code ${result.status}.`,
-        result.stdout?.trim(),
-        result.stderr?.trim(),
-      ].filter(Boolean).join('\n'),
-    );
+    throw new WranglerCommandError(args, result);
   }
 
   return result.stdout.trim();
@@ -190,6 +201,17 @@ function findR2Bucket(list, name) {
   return Boolean(getNamedResource(list, name));
 }
 
+function isR2NotEntitledError(error) {
+  if (!(error instanceof WranglerCommandError)) {
+    return false;
+  }
+
+  const output = `${error.stdout}\n${error.stderr}`;
+  return output.includes('[code: 10042]')
+    || output.includes('Please enable R2 through the Cloudflare Dashboard')
+    || output.includes('Account not entitled to this feature');
+}
+
 function ensureD1Database(configPath, databaseName) {
   const configArgs = ['--config', configPath];
   const existingList = readWranglerJson(['d1', 'list', '--json', ...configArgs]);
@@ -215,7 +237,23 @@ function ensureD1Database(configPath, databaseName) {
 
 function ensureR2Bucket(configPath, bucketName) {
   const configArgs = ['--config', configPath];
-  const existingList = readWranglerJson(['r2', 'bucket', 'list', ...configArgs]);
+  let existingList;
+  try {
+    existingList = readWranglerJson(['r2', 'bucket', 'list', ...configArgs]);
+  } catch (error) {
+    if (isR2NotEntitledError(error)) {
+      throw new Error(
+        [
+          'Cloudflare R2 is not enabled for this account, so media buckets cannot be created yet.',
+          'Open Cloudflare Dashboard -> R2 Object Storage once and enable R2, then rerun the deploy.',
+          `After R2 is enabled, this script will create the bucket from wrangler.toml: ${bucketName}`,
+        ].join('\n'),
+      );
+    }
+
+    throw error;
+  }
+
   if (findR2Bucket(existingList, bucketName)) {
     console.log(`R2 bucket exists: ${bucketName}`);
     return;
@@ -301,5 +339,10 @@ function applyMigrations(configPath, bindings) {
 const options = parseArgs(process.argv.slice(2));
 const configPath = resolveConfigPath(options.config);
 
-ensureConfigResources(configPath);
-applyMigrations(configPath, options.migrateBindings);
+try {
+  ensureConfigResources(configPath);
+  applyMigrations(configPath, options.migrateBindings);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}

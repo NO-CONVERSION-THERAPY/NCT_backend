@@ -1,4 +1,6 @@
 import type {
+  MotherMediaObjectSyncRecord,
+  MotherMediaObjectSyncResult,
   MotherMediaSyncRecord,
   MotherMediaSyncResult,
   SchoolMediaRecord,
@@ -6,6 +8,7 @@ import type {
   SchoolMediaStatus,
   SchoolMediaTag,
 } from '../types';
+import { resolveConfiguredBaseUrl } from './url';
 
 const R18_TAG_ID = 'tag:r18';
 const R18_TAG_SLUG = 'r18';
@@ -47,6 +50,11 @@ type SchoolMediaRow = {
   mother_sync_last_error: string | null;
   mother_sync_last_attempt_at: string | null;
   mother_sync_last_success_at: string | null;
+  mother_object_sync_status: string;
+  mother_object_sync_attempts: number;
+  mother_object_sync_last_error: string | null;
+  mother_object_sync_last_attempt_at: string | null;
+  mother_object_sync_last_success_at: string | null;
   uploaded_at: string | null;
   reviewed_at: string | null;
   created_at: string;
@@ -88,6 +96,10 @@ export type MediaUploadDirectInput = Omit<
 };
 
 export type MediaSubmitTarget = 'b2' | 'r2' | 'both';
+
+type MediaPublicUrlOptions = {
+  fallbackOrigin?: string;
+};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -395,9 +407,17 @@ function buildPublicUrl(env: Env, objectKey: string): string {
   return `${resolveB2Config(env).publicBaseUrl}/${encodeObjectKeyPath(objectKey)}`;
 }
 
-function buildR2PublicUrl(env: Env, objectKey: string): string {
+function buildR2PublicUrl(
+  env: Env,
+  objectKey: string,
+  options: MediaPublicUrlOptions = {},
+): string {
   const path = `/api/media/files/${encodeObjectKeyPath(objectKey)}`;
-  const baseUrl = env.SERVICE_PUBLIC_URL?.trim() || env.NO_TORSION_SITE_URL?.trim();
+  const baseUrl = resolveConfiguredBaseUrl(
+    env.SERVICE_PUBLIC_URL,
+    env.NO_TORSION_SITE_URL,
+    options.fallbackOrigin,
+  );
   if (!baseUrl) {
     return path;
   }
@@ -409,10 +429,11 @@ function buildMediaPublicUrl(
   env: Env,
   objectKey: string,
   target: MediaSubmitTarget,
+  options: MediaPublicUrlOptions = {},
 ): string {
   return targetIncludesB2(target)
     ? buildPublicUrl(env, objectKey)
-    : buildR2PublicUrl(env, objectKey);
+    : buildR2PublicUrl(env, objectKey, options);
 }
 
 type B2NativeAuth = {
@@ -887,9 +908,14 @@ function targetIncludesR2(target: MediaSubmitTarget): boolean {
   return target === 'r2' || target === 'both';
 }
 
+export function mediaTargetIncludesR2(target: MediaSubmitTarget): boolean {
+  return targetIncludesR2(target);
+}
+
 async function createMediaRecord(
   env: Env,
   input: MediaUploadPresignInput,
+  options: MediaPublicUrlOptions = {},
 ): Promise<SchoolMediaRecord> {
   const values = validatePresignInput(env, input);
   const target = getMediaSubmitTarget(env);
@@ -904,7 +930,7 @@ async function createMediaRecord(
     String(year),
     `${mediaId}.${getExtension(values.fileName, values.contentType)}`,
   ].join('/');
-  const publicUrl = buildMediaPublicUrl(env, objectKey, target);
+  const publicUrl = buildMediaPublicUrl(env, objectKey, target, options);
   const createdAt = nowIso();
 
   await env.DB.prepare(
@@ -976,6 +1002,7 @@ async function createMediaRecord(
 export async function createMediaUpload(
   env: Env,
   input: MediaUploadPresignInput,
+  options: MediaPublicUrlOptions = {},
 ): Promise<{
   headers: Record<string, string>;
   media: SchoolMediaRecord;
@@ -987,7 +1014,7 @@ export async function createMediaUpload(
     throw new Error('Presigned media uploads require B2 media target.');
   }
 
-  const stored = await createMediaRecord(env, input);
+  const stored = await createMediaRecord(env, input, options);
 
   return {
     headers: {
@@ -1051,6 +1078,8 @@ export async function completeMediaUpload(
       SET status = 'pending_review',
           mother_sync_status = 'pending',
           mother_sync_last_error = NULL,
+          mother_object_sync_status = 'pending',
+          mother_object_sync_last_error = NULL,
           uploaded_at = COALESCE(uploaded_at, ?),
           updated_at = ?
       WHERE id = ?
@@ -1078,6 +1107,8 @@ async function markMediaUploadComplete(
       SET status = 'pending_review',
           mother_sync_status = 'pending',
           mother_sync_last_error = NULL,
+          mother_object_sync_status = 'pending',
+          mother_object_sync_last_error = NULL,
           uploaded_at = COALESCE(uploaded_at, ?),
           updated_at = ?
       WHERE id = ?
@@ -1099,15 +1130,13 @@ export function getMediaSubmitTarget(env: Env): MediaSubmitTarget {
   if (raw === 'b2' || raw === 'r2' || raw === 'both') {
     return raw;
   }
-  if (raw === 'd1') {
-    return 'both';
-  }
   return 'both';
 }
 
 export async function uploadMediaDirect(
   env: Env,
   input: MediaUploadDirectInput,
+  options: MediaPublicUrlOptions = {},
 ): Promise<SchoolMediaRecord> {
   const file = input.file;
   if (!isMediaFile(file)) {
@@ -1115,12 +1144,16 @@ export async function uploadMediaDirect(
   }
 
   const target = getMediaSubmitTarget(env);
-  const media = await createMediaRecord(env, {
-    ...input,
-    byteSize: file.size,
-    contentType: file.type || 'application/octet-stream',
-    fileName: file.name,
-  });
+  const media = await createMediaRecord(
+    env,
+    {
+      ...input,
+      byteSize: file.size,
+      contentType: file.type || 'application/octet-stream',
+      fileName: file.name,
+    },
+    options,
+  );
 
   const objectUploads: Array<Promise<void>> = [];
   if (targetIncludesB2(target)) {
@@ -1239,6 +1272,55 @@ export async function listPendingMotherMediaSyncRecords(
   return records;
 }
 
+export async function listPendingMotherMediaObjectSyncRecords(
+  db: D1Database,
+  limit = 20,
+): Promise<MotherMediaObjectSyncRecord[]> {
+  const fastRetryBefore = new Date(
+    Date.now() - mediaRetryDelayMs(MEDIA_FAST_RETRY_LIMIT),
+  ).toISOString();
+  const slowRetryBefore = new Date(
+    Date.now() - mediaRetryDelayMs(MEDIA_FAST_RETRY_LIMIT + 1),
+  ).toISOString();
+  const result = await db.prepare(
+    `
+      SELECT *
+      FROM school_media
+      WHERE status != 'uploading'
+        AND COALESCE(mother_object_sync_status, 'pending') != 'synced'
+        AND (
+          COALESCE(mother_object_sync_status, 'pending') = 'pending'
+          OR mother_object_sync_last_attempt_at IS NULL
+          OR (
+            COALESCE(mother_object_sync_attempts, 0) <= ?
+            AND mother_object_sync_last_attempt_at <= ?
+          )
+          OR (
+            COALESCE(mother_object_sync_attempts, 0) > ?
+            AND mother_object_sync_last_attempt_at <= ?
+          )
+        )
+      ORDER BY updated_at ASC
+      LIMIT ?
+    `,
+  )
+    .bind(
+      MEDIA_FAST_RETRY_LIMIT,
+      fastRetryBefore,
+      MEDIA_FAST_RETRY_LIMIT,
+      slowRetryBefore,
+      Math.max(1, Math.min(limit, 200)),
+    )
+    .all<SchoolMediaRow>();
+
+  return (result.results ?? []).map((row) => ({
+    byteSize: Number(row.byte_size),
+    contentType: row.content_type,
+    id: row.id,
+    objectKey: row.object_key,
+  }));
+}
+
 export async function markMotherMediaSyncFailure(
   db: D1Database,
   mediaId: string,
@@ -1252,6 +1334,26 @@ export async function markMotherMediaSyncFailure(
           mother_sync_attempts = COALESCE(mother_sync_attempts, 0) + 1,
           mother_sync_last_error = ?,
           mother_sync_last_attempt_at = ?
+      WHERE id = ?
+    `,
+  )
+    .bind(errorMessage, attemptedAt, mediaId)
+    .run();
+}
+
+export async function markMotherMediaObjectSyncFailure(
+  db: D1Database,
+  mediaId: string,
+  errorMessage: string,
+): Promise<void> {
+  const attemptedAt = nowIso();
+  await db.prepare(
+    `
+      UPDATE school_media
+      SET mother_object_sync_status = 'failed',
+          mother_object_sync_attempts = COALESCE(mother_object_sync_attempts, 0) + 1,
+          mother_object_sync_last_error = ?,
+          mother_object_sync_last_attempt_at = ?
       WHERE id = ?
     `,
   )
@@ -1273,6 +1375,26 @@ export async function markMotherMediaSyncSuccess(
           mother_sync_last_attempt_at = ?,
           mother_sync_last_success_at = ?,
           updated_at = updated_at
+      WHERE id = ?
+    `,
+  )
+    .bind(syncedAt, syncedAt, result.mediaId)
+    .run();
+}
+
+export async function markMotherMediaObjectSyncSuccess(
+  db: D1Database,
+  result: MotherMediaObjectSyncResult,
+): Promise<void> {
+  const syncedAt = nowIso();
+  await db.prepare(
+    `
+      UPDATE school_media
+      SET mother_object_sync_status = 'synced',
+          mother_object_sync_attempts = COALESCE(mother_object_sync_attempts, 0) + 1,
+          mother_object_sync_last_error = NULL,
+          mother_object_sync_last_attempt_at = ?,
+          mother_object_sync_last_success_at = ?
       WHERE id = ?
     `,
   )

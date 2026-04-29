@@ -230,3 +230,17 @@ export interface MotherMediaSyncResult {
   mediaId: string;
   updated: boolean;
 }
+
+export interface MotherMediaObjectSyncRecord {
+  byteSize: number;
+  contentType: string;
+  id: string;
+  objectKey: string;
+}
+
+export interface MotherMediaObjectSyncResult {
+  localObjectKey?: string;
+  mediaId: string;
+  publicUrl?: string;
+  stored: boolean;
+}
