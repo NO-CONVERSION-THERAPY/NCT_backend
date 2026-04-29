@@ -6,8 +6,14 @@ const {
   getNullableDatabackVersionMock,
   hmacSha256Mock,
   listPendingMotherFormSyncRecordsMock,
+  listPendingMotherMediaObjectSyncRecordsMock,
+  listPendingMotherMediaSyncRecordsMock,
   markMotherFormSyncFailureMock,
   markMotherFormSyncSuccessMock,
+  markMotherMediaObjectSyncFailureMock,
+  markMotherMediaObjectSyncSuccessMock,
+  markMotherMediaSyncFailureMock,
+  markMotherMediaSyncSuccessMock,
   sha256Mock,
 } =
   vi.hoisted(() => ({
@@ -16,8 +22,14 @@ const {
     getNullableDatabackVersionMock: vi.fn(),
     hmacSha256Mock: vi.fn(),
     listPendingMotherFormSyncRecordsMock: vi.fn(),
+    listPendingMotherMediaObjectSyncRecordsMock: vi.fn(),
+    listPendingMotherMediaSyncRecordsMock: vi.fn(),
     markMotherFormSyncFailureMock: vi.fn(),
     markMotherFormSyncSuccessMock: vi.fn(),
+    markMotherMediaObjectSyncFailureMock: vi.fn(),
+    markMotherMediaObjectSyncSuccessMock: vi.fn(),
+    markMotherMediaSyncFailureMock: vi.fn(),
+    markMotherMediaSyncSuccessMock: vi.fn(),
     sha256Mock: vi.fn(),
   }));
 
@@ -30,10 +42,15 @@ vi.mock('./data', () => ({
 }));
 
 vi.mock('./media', () => ({
+  getMediaSubmitTarget: vi.fn((env: Env) => env.NO_TORSION_MEDIA_SUBMIT_TARGET === 'b2' ? 'b2' : 'both'),
   getSchoolMediaStats: getSchoolMediaStatsMock,
-  listPendingMotherMediaSyncRecords: vi.fn().mockResolvedValue([]),
-  markMotherMediaSyncFailure: vi.fn(),
-  markMotherMediaSyncSuccess: vi.fn(),
+  listPendingMotherMediaObjectSyncRecords: listPendingMotherMediaObjectSyncRecordsMock,
+  listPendingMotherMediaSyncRecords: listPendingMotherMediaSyncRecordsMock,
+  markMotherMediaObjectSyncFailure: markMotherMediaObjectSyncFailureMock,
+  markMotherMediaObjectSyncSuccess: markMotherMediaObjectSyncSuccessMock,
+  markMotherMediaSyncFailure: markMotherMediaSyncFailureMock,
+  markMotherMediaSyncSuccess: markMotherMediaSyncSuccessMock,
+  mediaTargetIncludesR2: vi.fn((target: string) => target === 'r2' || target === 'both'),
 }));
 
 vi.mock('./crypto', () => ({
@@ -42,6 +59,8 @@ vi.mock('./crypto', () => ({
 }));
 
 import {
+  flushPendingMotherMediaObjects,
+  flushPendingMotherMediaRecords,
   flushPendingMotherFormRecords,
   reportToMother,
   syncFromMother,
@@ -63,8 +82,14 @@ describe('reportToMother', () => {
     });
     bumpServiceReportCountMock.mockResolvedValue(3);
     listPendingMotherFormSyncRecordsMock.mockResolvedValue([]);
+    listPendingMotherMediaObjectSyncRecordsMock.mockResolvedValue([]);
+    listPendingMotherMediaSyncRecordsMock.mockResolvedValue([]);
     markMotherFormSyncFailureMock.mockResolvedValue(undefined);
     markMotherFormSyncSuccessMock.mockResolvedValue(undefined);
+    markMotherMediaObjectSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaObjectSyncSuccessMock.mockResolvedValue(undefined);
+    markMotherMediaSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaSyncSuccessMock.mockResolvedValue(undefined);
     hmacSha256Mock.mockResolvedValue('rotating-auth-token');
     sha256Mock.mockImplementation(async (value: string) => `sha256:${value}`);
   });
@@ -191,6 +216,27 @@ describe('reportToMother', () => {
     );
   });
 
+  it('normalizes bare service and mother URLs before reporting', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+
+    const result = await reportToMother({
+      DB: {} as D1Database,
+      APP_NAME: 'Sub App',
+      MOTHER_REPORT_URL: 'mother.example.com',
+      SERVICE_PUBLIC_URL: 'sub.example.com',
+    } as Env);
+
+    expect(result.delivered).toBe(true);
+    expect(result.payload?.serviceUrl).toBe('https://sub.example.com');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://mother.example.com/api/sub/report',
+    );
+    expect(hmacSha256Mock).toHaveBeenCalledWith(
+      expect.stringContaining('https://sub.example.com'),
+      'https://sub.example.com',
+    );
+  });
+
   it('returns response text when the mother service rejects the report', async () => {
     fetchMock.mockResolvedValue(
       new Response('temporarily unavailable', {
@@ -238,6 +284,12 @@ describe('flushPendingMotherFormRecords', () => {
     vi.stubGlobal('fetch', fetchMock);
     markMotherFormSyncFailureMock.mockResolvedValue(undefined);
     markMotherFormSyncSuccessMock.mockResolvedValue(undefined);
+    listPendingMotherMediaObjectSyncRecordsMock.mockResolvedValue([]);
+    listPendingMotherMediaSyncRecordsMock.mockResolvedValue([]);
+    markMotherMediaObjectSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaObjectSyncSuccessMock.mockResolvedValue(undefined);
+    markMotherMediaSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaSyncSuccessMock.mockResolvedValue(undefined);
     hmacSha256Mock.mockResolvedValue('rotating-auth-token');
     sha256Mock.mockImplementation(async (value: string) => `sha256:${value}`);
   });
@@ -326,6 +378,177 @@ describe('flushPendingMotherFormRecords', () => {
       },
     );
     expect(markMotherFormSyncFailureMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('flushPendingMotherMediaRecords', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    hmacSha256Mock.mockResolvedValue('rotating-auth-token');
+    listPendingMotherMediaSyncRecordsMock.mockResolvedValue([
+      {
+        byteSize: 11,
+        city: '',
+        contentType: 'image/png',
+        county: '',
+        fileName: 'gate.png',
+        id: 'media-id',
+        isR18: false,
+        mediaType: 'image',
+        objectKey: 'media/schools/demo/2026/media-id.png',
+        province: '',
+        publicUrl: '/api/media/files/media/schools/demo/2026/media-id.png',
+        schoolAddress: '',
+        schoolName: 'Demo School',
+        schoolNameNorm: 'demo school',
+        tags: [],
+        updatedAt: '2026-04-24T12:00:00.000Z',
+        uploadedAt: '2026-04-24T12:00:00.000Z',
+      },
+    ]);
+    markMotherMediaSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaSyncSuccessMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('normalizes relative media public URLs before syncing to the mother service', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          results: [
+            {
+              mediaId: 'media-id',
+              updated: true,
+            },
+          ],
+        }),
+        { status: 202 },
+      ),
+    );
+
+    const result = await flushPendingMotherMediaRecords({
+      DB: {} as D1Database,
+      MOTHER_REPORT_URL: 'mother.example.com',
+      SERVICE_PUBLIC_URL: 'sub.example.com',
+    } as Env);
+
+    expect(result).toMatchObject({
+      deliveredCount: 1,
+      pendingCount: 0,
+      responseCode: 202,
+      skipped: false,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://mother.example.com/api/sub/media-records',
+    );
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      records: Array<{
+        publicUrl: string;
+      }>;
+      serviceUrl: string;
+    };
+    expect(body.serviceUrl).toBe('https://sub.example.com');
+    expect(body.records[0]?.publicUrl).toBe(
+      'https://sub.example.com/api/media/files/media/schools/demo/2026/media-id.png',
+    );
+    expect(markMotherMediaSyncSuccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        mediaId: 'media-id',
+        updated: true,
+      },
+    );
+  });
+});
+
+describe('flushPendingMotherMediaObjects', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    hmacSha256Mock.mockResolvedValue('rotating-auth-token');
+    listPendingMotherMediaObjectSyncRecordsMock.mockResolvedValue([
+      {
+        byteSize: 11,
+        contentType: 'image/png',
+        id: 'media-id',
+        objectKey: 'media/schools/demo/2026/media-id.png',
+      },
+    ]);
+    markMotherMediaObjectSyncFailureMock.mockResolvedValue(undefined);
+    markMotherMediaObjectSyncSuccessMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('uploads pending local R2 media objects to the mother service', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          localObjectKey: 'sub-media/source/media/schools/demo/2026/media-id.png',
+          mediaId: 'media-id',
+          publicUrl: 'https://mother.example.com/api/media/files/sub-media/source/media/schools/demo/2026/media-id.png',
+          stored: true,
+        }),
+        { status: 202 },
+      ),
+    );
+    const get = vi.fn(async () => ({
+      body: new Blob(['media-bytes']).stream(),
+      httpEtag: '"etag"',
+      writeHttpMetadata(headers: Headers) {
+        headers.set('content-type', 'image/png');
+      },
+    }));
+
+    const result = await flushPendingMotherMediaObjects({
+      DB: {} as D1Database,
+      MEDIA_BUCKET: {
+        get,
+      } as unknown as R2Bucket,
+      MOTHER_REPORT_URL: 'mother.example.com',
+      NO_TORSION_MEDIA_SUBMIT_TARGET: 'both',
+      SERVICE_PUBLIC_URL: 'sub.example.com',
+    } as Env);
+
+    expect(result).toMatchObject({
+      deliveredCount: 1,
+      pendingCount: 0,
+      responseCode: 202,
+      skipped: false,
+    });
+    expect(get).toHaveBeenCalledWith('media/schools/demo/2026/media-id.png');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsedUrl = new URL(url);
+    expect(`${parsedUrl.origin}${parsedUrl.pathname}`).toBe('https://mother.example.com/api/sub/media-objects');
+    expect(parsedUrl.searchParams.get('serviceUrl')).toBe('https://sub.example.com');
+    expect(parsedUrl.searchParams.get('mediaId')).toBe('media-id');
+    expect(parsedUrl.searchParams.get('objectKey')).toBe('media/schools/demo/2026/media-id.png');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual(expect.any(Headers));
+    expect((init.headers as Headers).get('authorization')).toBe('Bearer rotating-auth-token');
+    expect(markMotherMediaObjectSyncSuccessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        localObjectKey: 'sub-media/source/media/schools/demo/2026/media-id.png',
+        mediaId: 'media-id',
+        publicUrl: 'https://mother.example.com/api/media/files/sub-media/source/media/schools/demo/2026/media-id.png',
+        stored: true,
+      },
+    );
+    expect(markMotherMediaObjectSyncFailureMock).not.toHaveBeenCalled();
   });
 });
 

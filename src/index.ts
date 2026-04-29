@@ -19,6 +19,7 @@ import {
 import { translateDetailItems } from './lib/no-torsion-translation';
 import { parseJsonObject, stableStringify, toJsonObject } from './lib/json';
 import {
+  flushPendingMotherMediaObjects,
   flushPendingMotherMediaRecords,
   flushPendingMotherFormRecords,
   maybeReportOnFirstExecution,
@@ -31,6 +32,7 @@ import {
   uploadMediaDirect,
 } from './lib/media';
 import { readBearerToken, verifyServiceAuthToken } from './lib/service-auth';
+import { resolveConfiguredBaseUrl } from './lib/url';
 import {
   NoTorsionStandaloneDebugPage,
   NoTorsionStandaloneFormPage,
@@ -165,7 +167,8 @@ function getDatabackExportMinIntervalMs(env: Env): number {
 }
 
 function resolveLocalServiceUrl(env: Env, requestUrl: string): string {
-  return env.SERVICE_PUBLIC_URL?.trim() || new URL(requestUrl).origin;
+  return resolveConfiguredBaseUrl(env.SERVICE_PUBLIC_URL, new URL(requestUrl).origin)
+    ?? new URL(requestUrl).origin;
 }
 
 async function assertLocalServiceAuth(
@@ -1065,7 +1068,13 @@ app.get('/api/media/files/*', async (context) => {
 
 app.post('/api/media/uploads/presign', async (context) => {
   try {
-    return context.json(await createMediaUpload(context.env, await context.req.json()));
+    return context.json(await createMediaUpload(
+      context.env,
+      await context.req.json(),
+      {
+        fallbackOrigin: new URL(context.req.url).origin,
+      },
+    ));
   } catch (error) {
     return context.json(
       {
@@ -1133,12 +1142,14 @@ app.post('/api/media/uploads/direct', async (context) => {
       schoolAddress: getFormString(formData, 'schoolAddress'),
       schoolName: getFormString(formData, 'schoolName'),
       tags: getFormTags(formData),
+    }, {
+      fallbackOrigin: new URL(context.req.url).origin,
     });
-    context.executionCtx?.waitUntil(
-      flushPendingMotherMediaRecords(context.env, {
-        fallbackOrigin: new URL(context.req.url).origin,
-      }),
-    );
+    context.executionCtx?.waitUntil((async () => {
+      const fallbackOrigin = new URL(context.req.url).origin;
+      await flushPendingMotherMediaRecords(context.env, { fallbackOrigin });
+      await flushPendingMotherMediaObjects(context.env, { fallbackOrigin });
+    })());
 
     return context.json({
       media,
@@ -1156,11 +1167,11 @@ app.post('/api/media/uploads/direct', async (context) => {
 app.post('/api/media/uploads/complete', async (context) => {
   try {
     const media = await completeMediaUpload(context.env, await context.req.json());
-    context.executionCtx?.waitUntil(
-      flushPendingMotherMediaRecords(context.env, {
-        fallbackOrigin: new URL(context.req.url).origin,
-      }),
-    );
+    context.executionCtx?.waitUntil((async () => {
+      const fallbackOrigin = new URL(context.req.url).origin;
+      await flushPendingMotherMediaRecords(context.env, { fallbackOrigin });
+      await flushPendingMotherMediaObjects(context.env, { fallbackOrigin });
+    })());
 
     return context.json({
       media,
@@ -1383,6 +1394,7 @@ export default {
           await reportToMother(env);
         }
         await flushPendingMotherMediaRecords(env);
+        await flushPendingMotherMediaObjects(env);
         await flushPendingMotherFormRecords(env);
       })()
     );

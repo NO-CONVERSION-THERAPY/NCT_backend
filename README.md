@@ -216,6 +216,13 @@ cp .env.example .dev.vars
 - `NO_TORSION_FORM_DRY_RUN=true`
 - `NO_TORSION_FORM_SUBMIT_TARGET=both`
 - `NO_TORSION_CORRECTION_SUBMIT_TARGET=both`
+- `NO_TORSION_MEDIA_SUBMIT_TARGET=both`
+
+提交目标可选项统一使用小写英文：
+
+- `NO_TORSION_FORM_SUBMIT_TARGET`: `google`、`d1`、`both`
+- `NO_TORSION_CORRECTION_SUBMIT_TARGET`: `google`、`d1`、`both`
+- `NO_TORSION_MEDIA_SUBMIT_TARGET`: `b2`、`r2`、`both`
 
 按功能必填：
 
@@ -307,7 +314,7 @@ Cloudflare 账号第一次使用 R2 前，需要先在 Dashboard 的 `R2 Object 
 1. 进入 Cloudflare Dashboard -> `Workers & Pages` -> `Create` -> `Import a repository`。
 2. 选择 Git 仓库后，按上表填写 `Project name`、`Path`、`Build command`、`Deploy command` 和 `Non-production branch deploy command`。
 3. 在 `Settings` -> `Variables and Secrets` 配置生产变量：
-   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`DEBUG_MOD`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`
+   - Variables：`APP_NAME`、`SERVICE_PUBLIC_URL`、`MOTHER_REPORT_URL`、`MOTHER_REPORT_TIMEOUT_MS`、`DATABACK_EXPORT_MIN_INTERVAL_MS`、`DEBUG_MOD`、`NO_TORSION_FORM_DRY_RUN`、`NO_TORSION_FORM_SUBMIT_TARGET`、`NO_TORSION_CORRECTION_SUBMIT_TARGET`、`NO_TORSION_MEDIA_SUBMIT_TARGET`
    - Secrets：`GOOGLE_CLOUD_TRANSLATION_API_KEY` 等不应公开的密钥
 4. 在 `Settings` -> `Triggers` 确认 Cron 来自 `wrangler.toml`：`*/30 * * * *` 和 `* * * * *`。
 5. 在 `Settings` -> `Domains & Routes` -> `Add` -> `Custom Domain` 绑定 `sub.example.com`。
@@ -323,12 +330,12 @@ MOTHER_REPORT_TIMEOUT_MS=10000
 DATABACK_EXPORT_MIN_INTERVAL_MS=60000
 DEBUG_MOD=false
 NO_TORSION_FORM_DRY_RUN=false
-NO_TORSION_FORM_SUBMIT_TARGET=d1
-NO_TORSION_CORRECTION_SUBMIT_TARGET=d1
+NO_TORSION_FORM_SUBMIT_TARGET=both
+NO_TORSION_CORRECTION_SUBMIT_TARGET=both
 NO_TORSION_MEDIA_SUBMIT_TARGET=both
 ```
 
-`NO_TORSION_MEDIA_SUBMIT_TARGET=both` 会将媒体文件同时写入 Backblaze B2 与 Cloudflare R2；D1 保存媒体元数据和审核状态，公开链接仍使用 B2 URL。
+`NO_TORSION_MEDIA_SUBMIT_TARGET=both` 会将媒体文件同时写入 Backblaze B2 与 Cloudflare R2；D1 始终保存媒体元数据和审核状态，公开链接仍优先使用 B2 URL。
 
 部署后检查：
 

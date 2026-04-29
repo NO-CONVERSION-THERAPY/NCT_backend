@@ -50,7 +50,7 @@ describe('submitNoTorsionCorrection', () => {
   it('writes D1 correction submissions to both nct_form and nct_databack', async () => {
     const env = {
       DB: {} as D1Database,
-      NO_TORSION_CORRECTION_SUBMIT_TARGET: 'd1',
+      NO_TORSION_CORRECTION_SUBMIT_TARGET: 'D1',
     } as Env;
     const token = await issueFormProtectionToken(env);
 
@@ -135,7 +135,7 @@ describe('submitNoTorsionFormSubmission', () => {
       DB: {} as D1Database,
       NO_TORSION_FORM_DRY_RUN: 'false',
       NO_TORSION_FORM_PROTECTION_MIN_FILL_MS: '0',
-      NO_TORSION_FORM_SUBMIT_TARGET: 'd1',
+      NO_TORSION_FORM_SUBMIT_TARGET: 'D1',
     } as Env;
     const token = await issueFormProtectionToken(env);
 
